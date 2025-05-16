@@ -243,12 +243,15 @@ def send_to_discord(image_path, analysis_result):
             "embeds": [embed]
         }
 
+        # Convert payload to JSON string
+        payload_json = json.dumps(payload)
+
         # Prepare the multipart form data
         files = {
             'file': ('analyzed_frame.jpg', open(image_path, 'rb'), 'image/jpeg')
         }
         data = {
-            'payload_json': json.dumps(payload)
+            'payload_json': payload_json
         }
 
         # Send to Discord
@@ -259,8 +262,11 @@ def send_to_discord(image_path, analysis_result):
         )
         response.raise_for_status()
         logger.info("Successfully sent analysis results to Discord")
+        return True
     except Exception as e:
         logger.error(f"Failed to send to Discord: {str(e)}")
+        logger.error(f"Failed to send to Discord at {datetime.now()}")
+        return False
 
 def publish_status(print_failed, description):
     """Publish status to MQTT topic if configured."""
@@ -282,6 +288,10 @@ def process_frame():
     try:
         # Capture frame
         frame = capture_frame(RTSP_URL)
+        
+        # Save frame as temporary image file
+        temp_image_path = '/tmp/analyzed_frame.jpg'
+        cv2.imwrite(temp_image_path, frame)
         
         # Encode image
         image_base64 = encode_image(frame)
@@ -309,7 +319,7 @@ def process_frame():
         global last_failure_time
         if print_failed and (last_failure_time is None or datetime.now() - last_failure_time > timedelta(minutes=15)):
             if DISCORD_WEBHOOK_URL:
-                if send_to_discord(frame, analysis_result):
+                if send_to_discord(temp_image_path, analysis_result):
                     if VERBOSE_LOGGING:
                         logger.info(f"Successfully processed and sent analysis at {datetime.now()}")
                     last_failure_time = datetime.now()
@@ -324,6 +334,12 @@ def process_frame():
                 logger.info(f"Print failure detected, but notification suppressed due to recent failure at {datetime.now()}")
             else:
                 logger.info(f"No print failure detected at {datetime.now()}")
+        
+        # Clean up temporary image file
+        try:
+            os.remove(temp_image_path)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary image file: {e}")
         
     except Exception as e:
         logger.error(f"Error occurred: {str(e)}", exc_info=True)
