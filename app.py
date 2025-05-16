@@ -195,27 +195,46 @@ def analyze_image_with_bedrock(image_base64):
         }
     }
     
-    try:
-        response = bedrock.invoke_model(
-            modelId=INFERENCE_PROFILE_ARN,
-            body=json.dumps(prompt)
-        )
-        result = json.loads(response['body'].read())
-        if VERBOSE_LOGGING:
-            logger.info("Received analysis from Bedrock")
-        return result
-    except bedrock.exceptions.ExpiredTokenException:
-        logger.warning("AWS credentials expired, reloading...")
-        bedrock = get_aws_session()
-        # Retry the request with new credentials
-        response = bedrock.invoke_model(
-            modelId=INFERENCE_PROFILE_ARN,
-            body=json.dumps(prompt)
-        )
-        result = json.loads(response['body'].read())
-        if VERBOSE_LOGGING:
-            logger.info("Received analysis from Bedrock after credential reload")
-        return result
+    max_retries = 3
+    retry_delay = 5  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            response = bedrock.invoke_model(
+                modelId=INFERENCE_PROFILE_ARN,
+                body=json.dumps(prompt)
+            )
+            result = json.loads(response['body'].read())
+            if VERBOSE_LOGGING:
+                logger.info("Received analysis from Bedrock")
+            return result
+            
+        except bedrock.exceptions.ThrottlingException as e:
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (attempt + 1)  # Exponential backoff
+                logger.warning(f"Bedrock throttling, attempt {attempt + 1}/{max_retries}. Waiting {wait_time} seconds...")
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"Bedrock throttling after {max_retries} attempts: {str(e)}")
+                raise
+                
+        except (bedrock.exceptions.AccessDeniedException, 
+                bedrock.exceptions.InternalServerException,
+                bedrock.exceptions.ModelErrorException,
+                bedrock.exceptions.ModelNotReadyException,
+                bedrock.exceptions.ModelStreamErrorException,
+                bedrock.exceptions.ModelTimeoutException,
+                bedrock.exceptions.ResourceNotFoundException,
+                bedrock.exceptions.ServiceQuotaExceededException,
+                bedrock.exceptions.ServiceUnavailableException,
+                bedrock.exceptions.ValidationException) as e:
+            logger.error(f"Bedrock error: {str(e)}")
+            raise
+            
+        except Exception as e:
+            logger.error(f"Unexpected error in Bedrock analysis: {str(e)}")
+            raise
 
 def send_to_discord(image_path, analysis_result):
     """Send analysis results to Discord webhook"""
@@ -294,21 +313,40 @@ def process_frame():
     try:
         # Capture frame
         frame = capture_frame(RTSP_URL)
+        if frame is None:
+            logger.error("Failed to capture frame - frame is None")
+            return
         
         # Save frame as temporary image file
         temp_image_path = '/tmp/analyzed_frame.jpg'
-        cv2.imwrite(temp_image_path, frame)
+        try:
+            cv2.imwrite(temp_image_path, frame)
+        except Exception as e:
+            logger.error(f"Failed to save frame to temporary file: {e}")
+            return
         
         # Encode image
-        image_base64 = encode_image(frame)
+        try:
+            image_base64 = encode_image(frame)
+        except Exception as e:
+            logger.error(f"Failed to encode image: {e}")
+            return
         
         # Analyze with Bedrock
-        analysis_result = analyze_image_with_bedrock(image_base64)
+        try:
+            analysis_result = analyze_image_with_bedrock(image_base64)
+        except Exception as e:
+            logger.error(f"Failed to analyze image with Bedrock: {e}")
+            return
         
         # Check if a print failure was detected
-        content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
-        parsed_content = json.loads(content_text)
-        print_failed = parsed_content.get('print_failed')
+        try:
+            content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
+            parsed_content = json.loads(content_text)
+            print_failed = parsed_content.get('print_failed')
+        except Exception as e:
+            logger.error(f"Failed to parse analysis result: {e}")
+            return
 
         # Determine description
         if print_failed is True:
@@ -319,18 +357,24 @@ def process_frame():
             description = "Could not determine if a print failure was detected."
 
         # Publish status to MQTT if configured
-        publish_status(print_failed, description)
+        try:
+            publish_status(print_failed, description)
+        except Exception as e:
+            logger.error(f"Failed to publish MQTT status: {e}")
 
         # Only send a notification if a print failure is detected and it's been more than 15 minutes since the last failure
         global last_failure_time
         if print_failed and (last_failure_time is None or datetime.now() - last_failure_time > timedelta(minutes=15)):
             if DISCORD_WEBHOOK_URL:
-                if send_to_discord(temp_image_path, analysis_result):
-                    if VERBOSE_LOGGING:
-                        logger.info(f"Successfully processed and sent analysis at {datetime.now()}")
-                    last_failure_time = datetime.now()
-                else:
-                    logger.error(f"Failed to send to Discord at {datetime.now()}")
+                try:
+                    if send_to_discord(temp_image_path, analysis_result):
+                        if VERBOSE_LOGGING:
+                            logger.info(f"Successfully processed and sent analysis at {datetime.now()}")
+                        last_failure_time = datetime.now()
+                    else:
+                        logger.error(f"Failed to send to Discord at {datetime.now()}")
+                except Exception as e:
+                    logger.error(f"Error sending to Discord: {e}")
             else:
                 if VERBOSE_LOGGING:
                     logger.info(f"Print failure detected at {datetime.now()}, Discord notifications disabled")
@@ -348,7 +392,8 @@ def process_frame():
             logger.warning(f"Failed to remove temporary image file: {e}")
         
     except Exception as e:
-        logger.error(f"Error occurred: {str(e)}", exc_info=True)
+        logger.error(f"Error occurred in process_frame: {str(e)}", exc_info=True)
+        raise  # Re-raise the exception to be handled by the main loop
 
 def main():
     if TEST_MODE:
@@ -358,9 +403,26 @@ def main():
             time.sleep(3600)  # Sleep for an hour
     else:
         logger.info(f"Running in continuous mode - processing frames every {ANALYSIS_INTERVAL} seconds")
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        error_cooldown = 60  # seconds to wait after multiple errors
+        
         while True:
-            process_frame()
-            time.sleep(ANALYSIS_INTERVAL)
+            try:
+                process_frame()
+                consecutive_errors = 0  # Reset error counter on success
+                time.sleep(ANALYSIS_INTERVAL)
+            except Exception as e:
+                consecutive_errors += 1
+                logger.error(f"Error in main loop: {str(e)}", exc_info=True)
+                
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.error(f"Too many consecutive errors ({consecutive_errors}). Waiting {error_cooldown} seconds before retrying...")
+                    time.sleep(error_cooldown)
+                    consecutive_errors = 0  # Reset after cooldown
+                else:
+                    # Wait a bit longer than usual before retrying
+                    time.sleep(ANALYSIS_INTERVAL * 2)
 
 if __name__ == "__main__":
     main() 
