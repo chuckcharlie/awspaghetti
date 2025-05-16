@@ -133,21 +133,36 @@ def capture_frame(rtsp_url):
     """Capture a frame from the RTSP stream."""
     if VERBOSE_LOGGING:
         logger.info(f"Attempting to capture frame from {rtsp_url}")
+    
+    # Set OpenCV to be more resilient to stream errors
     cap = cv2.VideoCapture(rtsp_url)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer size to get latest frame
+    
     if not cap.isOpened():
         logger.error("Failed to open RTSP stream")
         raise Exception("Failed to open RTSP stream")
     
-    ret, frame = cap.read()
-    cap.release()
-    
-    if not ret:
-        logger.error("Failed to capture frame")
-        raise Exception("Failed to capture frame")
-    
-    if VERBOSE_LOGGING:
-        logger.info("Frame captured successfully")
-    return frame
+    try:
+        # Try to read frame with timeout
+        start_time = time.time()
+        timeout = 5  # seconds
+        
+        while time.time() - start_time < timeout:
+            ret, frame = cap.read()
+            if ret and frame is not None and frame.size > 0:
+                if VERBOSE_LOGGING:
+                    logger.info("Frame captured successfully")
+                return frame
+            time.sleep(0.1)  # Short delay between attempts
+            
+        logger.error("Timeout waiting for valid frame from RTSP stream")
+        raise Exception("Timeout waiting for valid frame")
+        
+    except Exception as e:
+        logger.error(f"Error capturing frame: {str(e)}")
+        raise
+    finally:
+        cap.release()
 
 def encode_image(frame):
     """Encode image to base64 in JPEG format."""
