@@ -1,0 +1,29 @@
+services:
+  rtsp-processor:
+    image: chuckcharlie/awspaghetti:latest
+    container_name: rtsp-processor
+    restart: unless-stopped
+    volumes:
+      # Mount your AWS credentials file
+      - /path/to/your/aws-credentials:/creds/credentials:ro
+    environment:
+      # Required: RTSP stream URL
+      - RTSP_URL=rtsp://example.com/stream
+      
+      # Optional: Discord webhook URL for notifications
+      # - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your-webhook-url
+      
+      # AWS Configuration
+      - AWS_REGION=us-west-2
+      - AWS_ROLE_ARN=arn:aws:iam::your-account-id:role/your-role-name
+      - INFERENCE_PROFILE_ARN=arn:aws:bedrock:region:account-id:inference-profile/your-profile
+      
+      # Application Settings
+      - TEST_MODE=false
+      - VERBOSE_LOGGING=false
+      - APP_AWS_PROFILE=default
+      - ANALYSIS_INTERVAL=10
+      
+      # Optional: MQTT Configuration
+      # - MQTT_BROKER_URL=mqtt://your-broker:1883
+      # - MQTT_TOPIC=printdetect/status
