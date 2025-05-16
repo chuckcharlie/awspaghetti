@@ -1,5 +1,8 @@
 # 3D Print Monitor with AWS Bedrock, Discord, and MQTT
 
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/chuckcharlie/awspaghetti?tab=readme-ov-file)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-Image-blue)](https://hub.docker.com/r/chuckcharlie/awspaghetti)
+
 This application monitors 3D prints in real-time by capturing frames from an RTSP stream, analyzing them using AWS Bedrock's AI capabilities, and sending notifications through Discord and MQTT. It's designed to detect print failures (like spaghetti) and provide immediate alerts through your preferred notification channels.
 
 ## Prerequisites
