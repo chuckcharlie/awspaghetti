@@ -230,20 +230,22 @@ def send_to_discord(image_path, analysis_result):
         else:
             result_dict = analysis_result
             
-        message_content = result_dict.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
-        is_print_failure = 'print failure' in message_content.lower()
+        # Extract the print_failed status from the analysis result
+        content_text = result_dict.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
+        parsed_content = json.loads(content_text)
+        is_print_failure = parsed_content.get('print_failed', False)
 
         # Create embed for Discord message
         embed = {
-            "title": "🚨 Print Failure Alert" if is_print_failure else "✅ Print Status Update",
-            "description": message_content,
+            "title": "⚠️ CRITICAL: Print Failure Detected" if is_print_failure else "ℹ️ Print Status: Normal",
+            "description": "Please verify in person or inspect the image above." if is_print_failure else "Print appears to be proceeding normally.",
             "color": 0xFF0000 if is_print_failure else 0x00FF00,  # Red for failure, green for success
             "timestamp": datetime.utcnow().isoformat()
         }
 
         # Prepare the payload
         payload = {
-            "content": "🚨 **PRINT FAILURE DETECTED!**" if is_print_failure else "✅ Print Status Update",
+            "content": "⚠️ **CRITICAL: Print Failure Detected**" if is_print_failure else "ℹ️ Print Status: Normal",
             "embeds": [embed]
         }
 
