@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 # Suppress OpenCV's H264 warnings
 os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
-cv2.setLogLevel(cv2.LOG_LEVEL_SILENT)
+os.environ['OPENCV_FFMPEG_LOGLEVEL'] = '0'  # Suppress FFMPEG logging
 
 # Configure logging
 logging.basicConfig(
