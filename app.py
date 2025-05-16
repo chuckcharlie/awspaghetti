@@ -216,6 +216,7 @@ def analyze_image_with_bedrock(image_base64):
     
     max_retries = 3
     retry_delay = 5  # seconds
+    refreshed = False
     
     for attempt in range(max_retries):
         try:
@@ -237,21 +238,13 @@ def analyze_image_with_bedrock(image_base64):
             else:
                 logger.error(f"Bedrock throttling after {max_retries} attempts: {str(e)}")
                 raise
-                
-        except (bedrock.exceptions.AccessDeniedException, 
-                bedrock.exceptions.InternalServerException,
-                bedrock.exceptions.ModelErrorException,
-                bedrock.exceptions.ModelNotReadyException,
-                bedrock.exceptions.ModelStreamErrorException,
-                bedrock.exceptions.ModelTimeoutException,
-                bedrock.exceptions.ResourceNotFoundException,
-                bedrock.exceptions.ServiceQuotaExceededException,
-                bedrock.exceptions.ServiceUnavailableException,
-                bedrock.exceptions.ValidationException) as e:
-            logger.error(f"Bedrock error: {str(e)}")
-            raise
-            
         except Exception as e:
+            # Check for ExpiredTokenException in the error message
+            if (not refreshed and 'ExpiredTokenException' in str(e)):
+                logger.warning("AWS credentials expired, reloading and retrying...")
+                bedrock = get_aws_session()
+                refreshed = True
+                continue  # Retry once after refreshing credentials
             logger.error(f"Unexpected error in Bedrock analysis: {str(e)}")
             raise
 
