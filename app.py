@@ -225,7 +225,11 @@ def send_to_discord(image_path, analysis_result):
 
     try:
         # Parse the analysis result to extract message content
-        result_dict = json.loads(analysis_result)
+        if isinstance(analysis_result, str):
+            result_dict = json.loads(analysis_result)
+        else:
+            result_dict = analysis_result
+            
         message_content = result_dict.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
         is_print_failure = 'print failure' in message_content.lower()
 

@@ -1,13 +1,14 @@
-# RTSP Stream Analyzer with AWS Bedrock and Discord
+# 3D Print Monitor with AWS Bedrock, Discord, and MQTT
 
-This application captures frames from an RTSP stream, analyzes them using AWS Bedrock, and sends the results to a Discord webhook.
+This application monitors 3D prints in real-time by capturing frames from an RTSP stream, analyzing them using AWS Bedrock's AI capabilities, and sending notifications through Discord and MQTT. It's designed to detect print failures (like spaghetti) and provide immediate alerts through your preferred notification channels.
 
 ## Prerequisites
 
 - Docker and Docker Compose installed
 - AWS credentials file
 - RTSP stream URL
-- Discord webhook URL
+- Discord webhook URL (optional)
+- MQTT broker (optional)
 
 ## Setup
 
