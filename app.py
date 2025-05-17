@@ -11,6 +11,7 @@ from io import BytesIO
 import paho.mqtt.client as mqtt
 from urllib.parse import urlparse
 from collections import deque
+import random
 
 # Suppress OpenCV's H264 warnings
 os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
@@ -179,48 +180,63 @@ def encode_image(frame):
     _, buffer = cv2.imencode('.jpg', frame)
     return base64.b64encode(buffer).decode('utf-8')
 
+def verify_failure(num_verifications=4, delay_seconds=2):
+    """Perform rapid verifications when a failure is detected."""
+    failures = 0
+    for i in range(num_verifications):
+        try:
+            # Capture a fresh frame for each verification
+            frame = capture_frame(RTSP_URL)
+            if frame is None:
+                logger.error(f"Failed to capture frame for verification {i+1}")
+                continue
+                
+            # Encode the fresh frame
+            image_base64 = encode_image(frame)
+            
+            # Analyze the fresh frame
+            analysis_result = analyze_image_with_bedrock(image_base64)
+            content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
+            parsed_content = json.loads(content_text)
+            if parsed_content.get('print_failed'):
+                failures += 1
+                logger.info(f"Verification {i+1}/{num_verifications}: Failure confirmed")
+            else:
+                logger.info(f"Verification {i+1}/{num_verifications}: No failure detected")
+            
+            if i < num_verifications - 1:  # Don't sleep after the last verification
+                time.sleep(delay_seconds)
+                
+        except Exception as e:
+            logger.error(f"Error during verification {i+1}: {str(e)}")
+            # Count verification errors as non-failures to be conservative
+            continue
+            
+    return failures >= 2  # Return True if 2 or more verifications failed
+
 def analyze_image_with_bedrock(image_base64):
     """Send image to AWS Bedrock for analysis."""
     global bedrock
     if VERBOSE_LOGGING:
         logger.info("Sending image to Bedrock for analysis")
     
-    prompt = {
-        "schemaVersion": "messages-v1",
-        "system": [
-            {
-                "text": "You are a precise 3D printing quality inspector. You analyze images of active 3D prints and determine if a print failure is occurring."
-            }
-        ],
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "image": {
-                            "format": "jpeg",
-                            "source": {
-                                "bytes": image_base64
-                            }
-                        }
-                    },
-                    {
-                        "text": "Based on this image of a 3D printer in progress, determine if the print has failed. A common sign of failure is loose or tangled filament (known as 'spaghetti'). Respond only with a JSON object containing one key: 'print_failed' with a boolean value (true or false)."
-                    }
-                ]
-            }
-        ],
-        "inferenceConfig": {
-            "maxTokens": 500,
-            "temperature": 0,
-            "topP": 1,
-            "topK": 1
-        }
-    }
+    # Load and prepare the prompt template
+    try:
+        with open('prompt.json', 'r') as f:
+            prompt_template = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load prompt template: {e}")
+        raise
     
-    max_retries = 3
-    retry_delay = 5  # seconds
-    refreshed = False
+    # Replace the image_base64 placeholder
+    prompt_str = json.dumps(prompt_template)
+    prompt_str = prompt_str.replace('"{{image_base64}}"', f'"{image_base64}"')
+    prompt = json.loads(prompt_str)
+    
+    max_retries = 5
+    base_delay = 1  # Start with 1 second
+    max_delay = 32  # Maximum delay of 32 seconds
+    jitter = 0.1  # 10% jitter
     
     for attempt in range(max_retries):
         try:
@@ -235,19 +251,24 @@ def analyze_image_with_bedrock(image_base64):
             
         except bedrock.exceptions.ThrottlingException as e:
             if attempt < max_retries - 1:
-                wait_time = retry_delay * (attempt + 1)  # Exponential backoff
-                logger.warning(f"Bedrock throttling, attempt {attempt + 1}/{max_retries}. Waiting {wait_time} seconds...")
-                time.sleep(wait_time)
+                # Calculate delay with exponential backoff and jitter
+                delay = min(max_delay, base_delay * (2 ** attempt))
+                jitter_amount = delay * jitter
+                actual_delay = delay + (random.uniform(-jitter_amount, jitter_amount))
+                
+                logger.warning(f"Bedrock throttling, attempt {attempt + 1}/{max_retries}. "
+                             f"Waiting {actual_delay:.1f} seconds...")
+                time.sleep(actual_delay)
                 continue
             else:
                 logger.error(f"Bedrock throttling after {max_retries} attempts: {str(e)}")
                 raise
+                
         except Exception as e:
             # Check for ExpiredTokenException in the error message
-            if (not refreshed and 'ExpiredTokenException' in str(e)):
+            if 'ExpiredTokenException' in str(e):
                 logger.warning("AWS credentials expired, reloading and retrying...")
                 bedrock = get_aws_session()
-                refreshed = True
                 continue  # Retry once after refreshing credentials
             logger.error(f"Unexpected error in Bedrock analysis: {str(e)}")
             raise
@@ -348,7 +369,7 @@ def process_frame():
             logger.error(f"Failed to encode image: {e}")
             return
         
-        # Analyze with Bedrock
+        # Initial analysis with Bedrock
         try:
             analysis_result = analyze_image_with_bedrock(image_base64)
         except Exception as e:
@@ -361,15 +382,15 @@ def process_frame():
             parsed_content = json.loads(content_text)
             print_failed = parsed_content.get('print_failed')
             
-            # Add result to the rolling window
-            failure_window.append(print_failed)
-            
-            # Calculate failure ratio
-            failure_count = sum(1 for x in failure_window if x is True)
-            failure_ratio = failure_count / len(failure_window) if failure_window else 0
-            
-            if VERBOSE_LOGGING:
-                logger.info(f"Failure ratio: {failure_ratio:.2f} ({failure_count}/{len(failure_window)})")
+            # If initial analysis indicates failure, perform rapid verifications
+            if print_failed:
+                logger.info("Initial analysis indicates failure. Starting rapid verifications...")
+                confirmed_failure = verify_failure()  # No longer passing image_base64
+                if not confirmed_failure:
+                    logger.info("Failure not confirmed by verifications")
+                    print_failed = False
+            else:
+                logger.info("No failure detected in initial analysis")
             
         except Exception as e:
             logger.error(f"Failed to parse analysis result: {e}")
@@ -377,9 +398,9 @@ def process_frame():
 
         # Determine description
         if print_failed is True:
-            description = "Print failure was detected in the image."
+            description = "Print failure was confirmed by multiple verifications."
         elif print_failed is False:
-            description = "No print failure was detected in the image."
+            description = "No print failure was detected."
         else:
             description = "Could not determine if a print failure was detected."
 
@@ -390,12 +411,10 @@ def process_frame():
             logger.error(f"Failed to publish MQTT status: {e}")
 
         # Only send a notification if:
-        # 1. We have enough samples (at least 3)
-        # 2. The failure ratio is >= 0.6 (3 out of 5)
-        # 3. It's been more than 15 minutes since the last notification
+        # 1. Failure was confirmed by verifications
+        # 2. It's been more than 15 minutes since the last notification
         global last_failure_time
-        if (len(failure_window) >= 3 and 
-            failure_ratio >= 0.6 and 
+        if (print_failed and 
             (last_failure_time is None or datetime.now() - last_failure_time > timedelta(minutes=15))):
             
             if DISCORD_WEBHOOK_URL:
@@ -414,7 +433,7 @@ def process_frame():
                 last_failure_time = datetime.now()
         else:
             if print_failed:
-                logger.info(f"Print failure detected (ratio: {failure_ratio:.2f}), but notification suppressed due to recent failure or insufficient failure ratio at {datetime.now()}")
+                logger.info(f"Print failure detected but notification suppressed due to recent failure at {datetime.now()}")
             else:
                 logger.info(f"No print failure detected at {datetime.now()}")
         

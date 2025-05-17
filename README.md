@@ -1,21 +1,91 @@
-# 3D Print Monitor with AWS Bedrock, Discord, and MQTT
+# 3D Printer Failure Detection
 
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/chuckcharlie/awspaghetti?tab=readme-ov-file)
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-Image-blue)](https://hub.docker.com/r/chuckcharlie/awspaghetti)
+This application monitors a 3D printer using an RTSP camera feed and AWS Bedrock to detect print failures. It uses computer vision and AI to analyze the printer's status and sends notifications when failures are detected.
 
-This application monitors 3D prints in real-time by capturing frames from an RTSP stream, analyzing them using AWS Bedrock's AI capabilities, and sending notifications through Discord and MQTT. It's designed to detect print failures (like spaghetti) and provide immediate alerts through your preferred notification channels.
+## Features
 
-## Failure Detection and Alerting
+- Real-time monitoring of 3D printer via RTSP camera feed
+- AI-powered failure detection using AWS Bedrock
+- Discord notifications for critical failures
+- MQTT status updates
+- Robust error handling and automatic recovery
+- Configurable analysis intervals
+- Test mode for manual triggering
 
-The application uses a sophisticated failure detection system to minimize false positives:
+## How It Works
 
-- Maintains a rolling window of the last 5 analysis results
-- Requires at least 3 samples before considering an alert
-- Triggers an alert only when 60% or more of the samples indicate failure (3 out of 5)
-- Implements a 15-minute cooldown period between alerts
-- Provides detailed logging of failure ratios for monitoring
+1. **Frame Capture**: The application captures frames from the RTSP camera feed at configurable intervals.
 
-This multi-stage verification ensures that alerts are only sent when there's a consistent pattern of failure, reducing false alarms while still maintaining timely notification of actual print failures.
+2. **AI Analysis**: Each frame is analyzed using AWS Bedrock to detect potential print failures. The AI model looks for signs of failure such as loose or tangled filament (known as "spaghetti").
+
+3. **Verification Process**: When a potential failure is detected, the system performs additional verifications:
+   - Immediately captures 4 fresh frames from the camera
+   - Each frame is analyzed independently
+   - Frames are captured 2 seconds apart
+   - A failure is only confirmed if 2 or more of these verifications also detect a failure
+
+4. **Notifications**: If a failure is confirmed:
+   - A critical alert is sent to Discord with the captured image
+   - The system implements a 15-minute cooldown between notifications
+   - MQTT status updates are sent (if configured)
+
+5. **Error Handling**: The system includes robust error handling:
+   - Automatic retry for AWS Bedrock throttling with exponential backoff
+   - Automatic credential refresh when AWS tokens expire
+   - Graceful handling of camera feed interruptions
+   - Automatic recovery from consecutive errors
+
+## Configuration
+
+The application is configured through environment variables:
+
+- `RTSP_URL`: URL of the RTSP camera feed
+- `DISCORD_WEBHOOK_URL`: Discord webhook URL for notifications
+- `AWS_REGION`: AWS region (default: us-west-2)
+- `AWS_ROLE_ARN`: ARN of the AWS role to assume
+- `INFERENCE_PROFILE_ARN`: ARN of the Bedrock inference profile
+- `TEST_MODE`: Enable test mode (true/false)
+- `VERBOSE_LOGGING`: Enable verbose logging (true/false)
+- `APP_AWS_PROFILE`: AWS profile to use (default: default)
+- `ANALYSIS_INTERVAL`: Interval between analyses in seconds (default: 10)
+- `MQTT_BROKER_URL`: URL of the MQTT broker (optional)
+- `MQTT_TOPIC`: MQTT topic for status updates (optional)
+
+## Docker Deployment
+
+The application is containerized and can be deployed using Docker. The container requires:
+
+1. AWS credentials mounted at `/creds/credentials`
+2. Environment variables configured
+3. Network access to:
+   - RTSP camera feed
+   - AWS Bedrock
+   - Discord (if notifications enabled)
+   - MQTT broker (if configured)
+
+## Error Recovery
+
+The system implements several recovery mechanisms:
+
+1. **Consecutive Errors**: After 5 consecutive errors, the system waits for 60 seconds before retrying
+2. **AWS Throttling**: Implements exponential backoff with jitter for Bedrock API calls
+3. **Credential Expiration**: Automatically refreshes AWS credentials when they expire
+4. **Camera Feed**: Implements timeout and retry logic for frame capture
+
+## Logging
+
+The application provides detailed logging:
+- Timestamp for each event
+- Success/failure of each operation
+- Detailed error messages
+- Optional verbose logging for debugging
+
+## Security
+
+- AWS credentials are managed securely through mounted credentials file
+- Role-based access control for AWS Bedrock
+- No hardcoded credentials
+- Secure handling of webhook URLs and MQTT connections
 
 ## Prerequisites
 

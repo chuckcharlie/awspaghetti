@@ -1,0 +1,32 @@
+{
+    "schemaVersion": "messages-v1",
+    "system": [
+        {
+            "text": "You are a precise 3D printing quality inspector. You analyze images of active 3D prints and determine if a print failure is occurring."
+        }
+    ],
+    "messages": [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "image": {
+                        "format": "jpeg",
+                        "source": {
+                            "bytes": "{{image_base64}}"
+                        }
+                    }
+                },
+                {
+                    "text": "Based on this image of a 3D printer in progress, determine if the print has failed. A common sign of failure is loose or tangled filament (known as 'spaghetti'). Respond only with a JSON object containing one key: 'print_failed' with a boolean value (true or false)."
+                }
+            ]
+        }
+    ],
+    "inferenceConfig": {
+        "maxTokens": 500,
+        "temperature": 0,
+        "topP": 1,
+        "topK": 1
+    }
+} 

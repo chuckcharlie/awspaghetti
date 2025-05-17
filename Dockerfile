@@ -9,12 +9,16 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application files
 COPY app.py .
+COPY prompt.json .
+
+# Create directory for credentials
+RUN mkdir -p /creds
 
 # Run the application
 CMD ["python", "app.py"] 
