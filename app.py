@@ -10,6 +10,7 @@ import base64
 from io import BytesIO
 import paho.mqtt.client as mqtt
 from urllib.parse import urlparse
+from collections import deque
 
 # Suppress OpenCV's H264 warnings
 os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
@@ -40,6 +41,9 @@ MQTT_TOPIC = os.getenv('MQTT_TOPIC')
 
 # Track the last time a failure was detected
 last_failure_time = None
+
+# Track the last 5 analysis results
+failure_window = deque(maxlen=5)
 
 # MQTT client setup
 mqtt_client = None
@@ -356,6 +360,17 @@ def process_frame():
             content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
             parsed_content = json.loads(content_text)
             print_failed = parsed_content.get('print_failed')
+            
+            # Add result to the rolling window
+            failure_window.append(print_failed)
+            
+            # Calculate failure ratio
+            failure_count = sum(1 for x in failure_window if x is True)
+            failure_ratio = failure_count / len(failure_window) if failure_window else 0
+            
+            if VERBOSE_LOGGING:
+                logger.info(f"Failure ratio: {failure_ratio:.2f} ({failure_count}/{len(failure_window)})")
+            
         except Exception as e:
             logger.error(f"Failed to parse analysis result: {e}")
             return
@@ -374,9 +389,15 @@ def process_frame():
         except Exception as e:
             logger.error(f"Failed to publish MQTT status: {e}")
 
-        # Only send a notification if a print failure is detected and it's been more than 15 minutes since the last failure
+        # Only send a notification if:
+        # 1. We have enough samples (at least 3)
+        # 2. The failure ratio is >= 0.6 (3 out of 5)
+        # 3. It's been more than 15 minutes since the last notification
         global last_failure_time
-        if print_failed and (last_failure_time is None or datetime.now() - last_failure_time > timedelta(minutes=15)):
+        if (len(failure_window) >= 3 and 
+            failure_ratio >= 0.6 and 
+            (last_failure_time is None or datetime.now() - last_failure_time > timedelta(minutes=15))):
+            
             if DISCORD_WEBHOOK_URL:
                 try:
                     if send_to_discord(temp_image_path, analysis_result):
@@ -393,7 +414,7 @@ def process_frame():
                 last_failure_time = datetime.now()
         else:
             if print_failed:
-                logger.info(f"Print failure detected, but notification suppressed due to recent failure at {datetime.now()}")
+                logger.info(f"Print failure detected (ratio: {failure_ratio:.2f}), but notification suppressed due to recent failure or insufficient failure ratio at {datetime.now()}")
             else:
                 logger.info(f"No print failure detected at {datetime.now()}")
         

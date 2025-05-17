@@ -5,6 +5,18 @@
 
 This application monitors 3D prints in real-time by capturing frames from an RTSP stream, analyzing them using AWS Bedrock's AI capabilities, and sending notifications through Discord and MQTT. It's designed to detect print failures (like spaghetti) and provide immediate alerts through your preferred notification channels.
 
+## Failure Detection and Alerting
+
+The application uses a sophisticated failure detection system to minimize false positives:
+
+- Maintains a rolling window of the last 5 analysis results
+- Requires at least 3 samples before considering an alert
+- Triggers an alert only when 60% or more of the samples indicate failure (3 out of 5)
+- Implements a 15-minute cooldown period between alerts
+- Provides detailed logging of failure ratios for monitoring
+
+This multi-stage verification ensures that alerts are only sent when there's a consistent pattern of failure, reducing false alarms while still maintaining timely notification of actual print failures.
+
 ## Prerequisites
 
 - Docker and Docker Compose installed
