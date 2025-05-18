@@ -195,10 +195,20 @@ def verify_failure():
                 continue
                 
             # Analyze the frame
-            response = analyze_image_with_bedrock(encode_image(frame))
-            if response.get('print_failed', False):
+            if VERBOSE_LOGGING:
+                logger.info(f"Starting verification {i+1}/{total_verifications} with Bedrock")
+            analysis_result = analyze_image_with_bedrock(encode_image(frame))
+            
+            # Parse the response
+            content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
+            if VERBOSE_LOGGING:
+                logger.info(f"Raw Bedrock response for verification {i+1}: {content_text}")
+            parsed_content = json.loads(content_text)
+            
+            if parsed_content.get('print_failed', False):
                 failures += 1
-                logger.info(f"Verification {i+1}/{total_verifications}: Failure confirmed")
+                explanation = parsed_content.get('explanation', 'No explanation provided')
+                logger.info(f"Verification {i+1}/{total_verifications}: Failure confirmed - {explanation}")
             else:
                 logger.info(f"Verification {i+1}/{total_verifications}: No failure detected")
                 
@@ -392,7 +402,8 @@ def process_frame():
             
             # If initial analysis indicates failure, perform rapid verifications
             if print_failed:
-                logger.info("Initial analysis indicates failure. Starting rapid verifications...")
+                logger.info(f"Initial analysis indicates failure: {explanation}")
+                logger.info("Starting rapid verifications...")
                 confirmed_failure = verify_failure()
                 if not confirmed_failure:
                     logger.info("Failure not confirmed by verifications")
