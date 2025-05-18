@@ -197,6 +197,8 @@ def verify_failure(num_verifications=4, delay_seconds=2):
             # Analyze the fresh frame
             analysis_result = analyze_image_with_bedrock(image_base64)
             content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
+            if VERBOSE_LOGGING:
+                logger.info(f"Raw Bedrock response for verification {i+1}: {content_text}")
             parsed_content = json.loads(content_text)
             if parsed_content.get('print_failed'):
                 failures += 1
@@ -387,6 +389,8 @@ def process_frame():
         # Check if a print failure was detected
         try:
             content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
+            if VERBOSE_LOGGING:
+                logger.info(f"Raw Bedrock response for initial analysis: {content_text}")
             parsed_content = json.loads(content_text)
             print_failed = parsed_content.get('print_failed')
             confidence = parsed_content.get('confidence', 'N/A')
