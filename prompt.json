@@ -1,32 +1,32 @@
 {
-    "schemaVersion": "messages-v1",
-    "system": [
-      {
-        "text": "You are a meticulous 3D printing quality inspector. Your task is to evaluate images of in-progress 3D prints and determine if a true print failure is occurring."
-      }
-    ],
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {
-            "image": {
-              "format": "jpeg",
-              "source": {
-                "bytes": "{{image_base64}}"
-              }
-            }
-          },
-          {
-            "text": "Based on this image of an active 3D print, determine if the print has clearly failed. A typical sign of failure is loose, tangled filament ('spaghetti') that accumulates in areas where the nozzle is no longer adhering properly to the bed or model. However, small wisps or stringing are not considered failures, especially when printing many small parts. Respond only with a strict JSON object containing two keys: 'print_failed' (a boolean) and 'confidence' (a number between 0.0 and 1.0 indicating your confidence in the failure assessment)."
-          }
-        ]
-      }
-    ],
-    "inferenceConfig": {
-      "maxTokens": 50,
-      "temperature": 0,
-      "topP": 1,
-      "topK": 1
+  "schemaVersion": "messages-v1",
+  "system": [
+    {
+      "text": "You are a meticulous 3D printing quality inspector. Your job is to evaluate whether a print has failed based on a photo of an in-progress 3D print. You look for visual signs of failure such as filament spaghetti, poor bed adhesion, or collapsed print structures."
     }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "image": {
+            "format": "jpeg",
+            "source": {
+              "bytes": "{{image_base64}}"
+            }
+          }
+        },
+        {
+          "text": "Based on this image, determine whether the print has clearly failed. A failed print typically includes a messy accumulation of loose or tangled filament (often called 'spaghetti'), parts detaching from the bed, or major structural collapse. Minor stringing, wisps, or scattered blobs—especially when printing many small parts—do not count as failures. First, explain your reasoning briefly. Then return a JSON object with the following fields:\n\n- 'print_failed': true or false\n- 'confidence': a number between 0.0 and 1.0 representing your certainty\n- 'explanation': a short justification for the decision\n\nRespond only with the JSON object."
+        }
+      ]
+    }
+  ],
+  "inferenceConfig": {
+    "maxTokens": 150,
+    "temperature": 0.3,
+    "topP": 1,
+    "topK": 1
   }
+}
