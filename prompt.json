@@ -24,7 +24,7 @@
         }
     ],
     "inferenceConfig": {
-        "maxTokens": 500,
+        "maxTokens": 50,
         "temperature": 0,
         "topP": 1,
         "topK": 1
