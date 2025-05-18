@@ -398,7 +398,8 @@ def process_frame():
                     logger.info("Failure not confirmed by verifications")
                     print_failed = False
             else:
-                logger.info("No failure detected in initial analysis")
+                if VERBOSE_LOGGING:
+                    logger.info("No failure detected in initial analysis")
             
         except Exception as e:
             logger.error(f"Failed to parse analysis result: {e}")
