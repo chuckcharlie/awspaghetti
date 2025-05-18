@@ -30,13 +30,17 @@ This application monitors a 3D printer using an RTSP camera feed and AWS Bedrock
    - The system immediately captures 4 fresh frames from the camera
    - Each frame is analyzed independently
    - Frames are captured 2 seconds apart
-   - A failure is only confirmed if 2 or more of these verifications also detect a failure
+   - A failure is only confirmed if at least 3 out of 4 verifications detect a failure
    - This helps prevent false positives while ensuring timely detection
 
 5. **Notifications**: If a failure is confirmed:
    - The 15-minute cooldown period begins
-   - Optional: A critical alert is sent to Discord with the captured image (if configured)
-   - Optional: MQTT status updates are sent (if configured)
+   - Optional notification methods (if configured):
+     - Discord: Sends a critical alert with:
+       - The captured image showing the failure
+       - A detailed explanation of why the failure was detected
+       - A request to verify in person
+     - MQTT: Publishes status updates to the configured topic
 
 6. **Error Handling**: The system includes robust error handling:
    - Automatic retry for AWS Bedrock throttling with exponential backoff

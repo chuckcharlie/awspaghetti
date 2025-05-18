@@ -180,43 +180,38 @@ def encode_image(frame):
     _, buffer = cv2.imencode('.jpg', frame)
     return base64.b64encode(buffer).decode('utf-8')
 
-def verify_failure(num_verifications=4, delay_seconds=2):
-    """Perform rapid verifications when a failure is detected."""
+def verify_failure():
+    """Verify a potential failure by analyzing multiple frames."""
+    logger.info("Starting failure verification process...")
     failures = 0
-    for i in range(num_verifications):
+    total_verifications = 4
+    
+    for i in range(total_verifications):
         try:
             # Capture a fresh frame for each verification
             frame = capture_frame(RTSP_URL)
             if frame is None:
-                logger.error(f"Failed to capture frame for verification {i+1}")
+                logger.error("Failed to capture frame for verification")
                 continue
                 
-            # Encode the fresh frame
-            image_base64 = encode_image(frame)
-            
-            # Analyze the fresh frame
-            analysis_result = analyze_image_with_bedrock(image_base64)
-            content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
-            if VERBOSE_LOGGING:
-                logger.info(f"Raw Bedrock response for verification {i+1}: {content_text}")
-            parsed_content = json.loads(content_text)
-            if parsed_content.get('print_failed'):
+            # Analyze the frame
+            response = analyze_image_with_bedrock(encode_image(frame))
+            if response.get('print_failed', False):
                 failures += 1
-                confidence = parsed_content.get('confidence', 'N/A')
-                logger.info(f"Verification {i+1}/{num_verifications}: Failure confirmed (confidence: {confidence})")
+                logger.info(f"Verification {i+1}/{total_verifications}: Failure confirmed")
             else:
-                confidence = parsed_content.get('confidence', 'N/A')
-                logger.info(f"Verification {i+1}/{num_verifications}: No failure detected (confidence: {confidence})")
-            
-            if i < num_verifications - 1:  # Don't sleep after the last verification
-                time.sleep(delay_seconds)
+                logger.info(f"Verification {i+1}/{total_verifications}: No failure detected")
+                
+            # Wait 2 seconds between verifications
+            if i < total_verifications - 1:  # Don't wait after the last verification
+                time.sleep(2)
                 
         except Exception as e:
             logger.error(f"Error during verification {i+1}: {str(e)}")
-            # Count verification errors as non-failures to be conservative
             continue
-            
-    return failures >= 2  # Return True if 2 or more verifications failed
+    
+    logger.info(f"Verification complete: {failures}/{total_verifications} failures detected")
+    return failures >= 3  # Return True if 3 or more verifications failed
 
 def analyze_image_with_bedrock(image_base64):
     """Send image to AWS Bedrock for analysis."""
@@ -277,7 +272,7 @@ def analyze_image_with_bedrock(image_base64):
             logger.error(f"Unexpected error in Bedrock analysis: {str(e)}")
             raise
 
-def send_to_discord(image_path, analysis_result):
+def send_to_discord(image_path, analysis_result, explanation):
     """Send analysis results to Discord webhook"""
     if not DISCORD_WEBHOOK_URL:
         logger.info("Discord webhook URL not configured, skipping Discord notification")
@@ -298,7 +293,7 @@ def send_to_discord(image_path, analysis_result):
         # Create embed for Discord message
         embed = {
             "title": "⚠️ CRITICAL: Print Failure Detected" if is_print_failure else "ℹ️ Print Status: Normal",
-            "description": "Please verify in person or inspect the image above." if is_print_failure else "Print appears to be proceeding normally.",
+            "description": f"Please verify in person or inspect the image above.\n\n**Analysis:** {explanation}" if is_print_failure else "Print appears to be proceeding normally.",
             "color": 0xFF0000 if is_print_failure else 0x00FF00,  # Red for failure, green for success
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -393,17 +388,17 @@ def process_frame():
                 logger.info(f"Raw Bedrock response for initial analysis: {content_text}")
             parsed_content = json.loads(content_text)
             print_failed = parsed_content.get('print_failed')
-            confidence = parsed_content.get('confidence', 'N/A')
+            explanation = parsed_content.get('explanation', 'No explanation provided')
             
             # If initial analysis indicates failure, perform rapid verifications
             if print_failed:
-                logger.info(f"Initial analysis indicates failure (confidence: {confidence}). Starting rapid verifications...")
+                logger.info("Initial analysis indicates failure. Starting rapid verifications...")
                 confirmed_failure = verify_failure()
                 if not confirmed_failure:
                     logger.info("Failure not confirmed by verifications")
                     print_failed = False
             else:
-                logger.info(f"No failure detected in initial analysis (confidence: {confidence})")
+                logger.info("No failure detected in initial analysis")
             
         except Exception as e:
             logger.error(f"Failed to parse analysis result: {e}")
@@ -427,7 +422,7 @@ def process_frame():
         if print_failed:
             if DISCORD_WEBHOOK_URL:
                 try:
-                    if send_to_discord(temp_image_path, analysis_result):
+                    if send_to_discord(temp_image_path, analysis_result, explanation):
                         if VERBOSE_LOGGING:
                             logger.info(f"Successfully processed and sent analysis at {datetime.now()}")
                         last_failure_time = datetime.now()
