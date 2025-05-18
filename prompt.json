@@ -1,32 +1,32 @@
 {
     "schemaVersion": "messages-v1",
     "system": [
-        {
-            "text": "You are a precise 3D printing quality inspector. You analyze images of active 3D prints and determine if a print failure is occurring."
-        }
+      {
+        "text": "You are a meticulous 3D printing quality inspector. Your task is to evaluate images of in-progress 3D prints and determine if a true print failure is occurring."
+      }
     ],
     "messages": [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "image": {
-                        "format": "jpeg",
-                        "source": {
-                            "bytes": "{{image_base64}}"
-                        }
-                    }
-                },
-                {
-                    "text": "Based on this image of a 3D printer in progress, determine if the print has failed. A common sign of failure is loose or tangled filament (known as 'spaghetti'). Respond only with a JSON object containing one key: 'print_failed' with a boolean value (true or false)."
-                }
-            ]
-        }
+      {
+        "role": "user",
+        "content": [
+          {
+            "image": {
+              "format": "jpeg",
+              "source": {
+                "bytes": "{{image_base64}}"
+              }
+            }
+          },
+          {
+            "text": "Based on this image of an active 3D print, determine if the print has clearly failed. A typical sign of failure is loose, tangled filament ('spaghetti') that accumulates in areas where the nozzle is no longer adhering properly to the bed or model. However, small wisps or stringing are not considered failures, especially when printing many small parts. Respond only with a strict JSON object containing two keys: 'print_failed' (a boolean) and 'confidence' (a number between 0.0 and 1.0 indicating your confidence in the failure assessment)."
+          }
+        ]
+      }
     ],
     "inferenceConfig": {
-        "maxTokens": 50,
-        "temperature": 0,
-        "topP": 1,
-        "topK": 1
+      "maxTokens": 50,
+      "temperature": 0,
+      "topP": 1,
+      "topK": 1
     }
-} 
+  }

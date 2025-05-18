@@ -200,9 +200,11 @@ def verify_failure(num_verifications=4, delay_seconds=2):
             parsed_content = json.loads(content_text)
             if parsed_content.get('print_failed'):
                 failures += 1
-                logger.info(f"Verification {i+1}/{num_verifications}: Failure confirmed")
+                confidence = parsed_content.get('confidence', 'N/A')
+                logger.info(f"Verification {i+1}/{num_verifications}: Failure confirmed (confidence: {confidence})")
             else:
-                logger.info(f"Verification {i+1}/{num_verifications}: No failure detected")
+                confidence = parsed_content.get('confidence', 'N/A')
+                logger.info(f"Verification {i+1}/{num_verifications}: No failure detected (confidence: {confidence})")
             
             if i < num_verifications - 1:  # Don't sleep after the last verification
                 time.sleep(delay_seconds)
@@ -387,14 +389,17 @@ def process_frame():
             content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
             parsed_content = json.loads(content_text)
             print_failed = parsed_content.get('print_failed')
+            confidence = parsed_content.get('confidence', 'N/A')
             
             # If initial analysis indicates failure, perform rapid verifications
             if print_failed:
-                logger.info("Initial analysis indicates failure. Starting rapid verifications...")
+                logger.info(f"Initial analysis indicates failure (confidence: {confidence}). Starting rapid verifications...")
                 confirmed_failure = verify_failure()
                 if not confirmed_failure:
                     logger.info("Failure not confirmed by verifications")
                     print_failed = False
+            else:
+                logger.info(f"No failure detected in initial analysis (confidence: {confidence})")
             
         except Exception as e:
             logger.error(f"Failed to parse analysis result: {e}")
