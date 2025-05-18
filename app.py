@@ -348,6 +348,12 @@ def publish_status(print_failed, description):
 def process_frame():
     """Process a single frame."""
     try:
+        # Check if we're in cooldown period
+        global last_failure_time
+        if last_failure_time is not None and datetime.now() - last_failure_time <= timedelta(minutes=15):
+            logger.info(f"In cooldown period until {last_failure_time + timedelta(minutes=15)}. Skipping Bedrock analysis.")
+            return
+
         # Capture frame
         frame = capture_frame(RTSP_URL)
         if frame is None:
@@ -385,7 +391,7 @@ def process_frame():
             # If initial analysis indicates failure, perform rapid verifications
             if print_failed:
                 logger.info("Initial analysis indicates failure. Starting rapid verifications...")
-                confirmed_failure = verify_failure()  # No longer passing image_base64
+                confirmed_failure = verify_failure()
                 if not confirmed_failure:
                     logger.info("Failure not confirmed by verifications")
                     print_failed = False
@@ -408,13 +414,8 @@ def process_frame():
         except Exception as e:
             logger.error(f"Failed to publish MQTT status: {e}")
 
-        # Only send a notification if:
-        # 1. Failure was confirmed by verifications
-        # 2. It's been more than 15 minutes since the last notification
-        global last_failure_time
-        if (print_failed and 
-            (last_failure_time is None or datetime.now() - last_failure_time > timedelta(minutes=15))):
-            
+        # Only send a notification if failure was confirmed by verifications
+        if print_failed:
             if DISCORD_WEBHOOK_URL:
                 try:
                     if send_to_discord(temp_image_path, analysis_result):
@@ -430,10 +431,7 @@ def process_frame():
                     logger.info(f"Print failure detected at {datetime.now()}, Discord notifications disabled")
                 last_failure_time = datetime.now()
         else:
-            if print_failed:
-                logger.info(f"Print failure detected but notification suppressed due to recent failure at {datetime.now()}")
-            else:
-                logger.info(f"No print failure detected at {datetime.now()}")
+            logger.info(f"No print failure detected at {datetime.now()}")
         
         # Clean up temporary image file
         try:
