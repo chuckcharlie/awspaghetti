@@ -191,7 +191,7 @@ def extract_json_from_bedrock_response(text):
     if not isinstance(text, str):
         raise ValueError("Input to extract_json_from_bedrock_response must be a string")
     # Try to find triple-backtick-wrapped JSON
-    match = re.search(r"```(?:json)?\\n?(.*?)```", text, re.DOTALL)
+    match = re.search(r"```(?:json)?\n?(.*?)```", text, re.DOTALL)
     if match:
         json_str = match.group(1).strip()
     else:
