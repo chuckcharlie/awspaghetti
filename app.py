@@ -12,6 +12,7 @@ import paho.mqtt.client as mqtt
 from urllib.parse import urlparse
 from collections import deque
 import random
+import re
 
 # Suppress OpenCV's H264 warnings
 os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
@@ -180,6 +181,23 @@ def encode_image(frame):
     _, buffer = cv2.imencode('.jpg', frame)
     return base64.b64encode(buffer).decode('utf-8')
 
+def extract_json_from_bedrock_response(text):
+    """
+    Extracts the JSON object from a Bedrock response, handling both:
+    - New format: triple-backtick-wrapped JSON (with or without 'json' label)
+    - Old format: raw JSON string
+    Returns a dict, or raises ValueError if parsing fails.
+    """
+    if not isinstance(text, str):
+        raise ValueError("Input to extract_json_from_bedrock_response must be a string")
+    # Try to find triple-backtick-wrapped JSON
+    match = re.search(r"```(?:json)?\\n?(.*?)```", text, re.DOTALL)
+    if match:
+        json_str = match.group(1).strip()
+    else:
+        json_str = text.strip()
+    return json.loads(json_str)
+
 def verify_failure():
     """Verify a potential failure by analyzing multiple frames."""
     logger.info("Starting failure verification process...")
@@ -203,7 +221,7 @@ def verify_failure():
             content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
             if VERBOSE_LOGGING:
                 logger.info(f"Raw Bedrock response for verification {i+1}: {content_text}")
-            parsed_content = json.loads(content_text)
+            parsed_content = extract_json_from_bedrock_response(content_text)
             
             if parsed_content.get('print_failed', False):
                 failures += 1
@@ -297,7 +315,7 @@ def send_to_discord(image_path, analysis_result, explanation):
             
         # Extract the print_failed status from the analysis result
         content_text = result_dict.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
-        parsed_content = json.loads(content_text)
+        parsed_content = extract_json_from_bedrock_response(content_text)
         is_print_failure = parsed_content.get('print_failed', False)
 
         # Create embed for Discord message
@@ -396,7 +414,7 @@ def process_frame():
             content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
             if VERBOSE_LOGGING:
                 logger.info(f"Raw Bedrock response for initial analysis: {content_text}")
-            parsed_content = json.loads(content_text)
+            parsed_content = extract_json_from_bedrock_response(content_text)
             print_failed = parsed_content.get('print_failed')
             explanation = parsed_content.get('explanation', 'No explanation provided')
             
