@@ -14,22 +14,22 @@ This application monitors a 3D printer using an RTSP camera feed and AWS Bedrock
 
 ## How It Works
 
-1. **Frame Capture**: The application captures frames from the RTSP camera feed at configurable intervals.
+1. **Multi-Image Capture**: The application captures a series of 3 images from the RTSP camera feed at 10-second intervals to show progression over time.
 
-2. **Cooldown Period**: 
+2. **AI Analysis**: When not in cooldown:
+   - The series of images is analyzed together using AWS Bedrock to detect potential print failures
+   - The AI model looks for signs of failure such as loose or tangled filament (known as "spaghetti") and progression of issues across the time series
+   - This multi-image approach provides better context for detecting failures that develop gradually
+
+3. **Cooldown Period**: 
    - After a failure is detected and confirmed, a 15-minute cooldown period begins
    - During this period, no Bedrock analysis or verifications are performed
    - This helps reduce API costs and unnecessary processing
    - The system logs when it's in cooldown and when the cooldown will end
 
-3. **AI Analysis**: When not in cooldown:
-   - Each frame is analyzed using AWS Bedrock to detect potential print failures
-   - The AI model looks for signs of failure such as loose or tangled filament (known as "spaghetti")
-
 4. **Verification Process**: When a potential failure is detected:
-   - The system immediately captures 4 fresh frames from the camera
-   - Each frame is analyzed independently
-   - Frames are captured 2 seconds apart
+   - The system immediately captures 4 additional series of 3 images each from the camera
+   - Each verification series uses 2-second intervals between images (hardcoded for speed, separate from main analysis timing)
    - A failure is only confirmed if at least 3 out of 4 verifications detect a failure
    - This helps prevent false positives while ensuring timely detection
 
@@ -60,7 +60,9 @@ The application is configured through environment variables:
 - `TEST_MODE`: Enable test mode (true/false)
 - `VERBOSE_LOGGING`: Enable verbose logging (true/false)
 - `APP_AWS_PROFILE`: AWS profile to use (default: default)
-- `ANALYSIS_INTERVAL`: Interval between analyses in seconds (default: 10)
+
+- `IMAGES_PER_SERIES`: Number of images to capture in each analysis cycle (default: 3)
+- `INTERVAL_BETWEEN_IMAGES`: Seconds between image captures in a series (default: 10)
 - `MQTT_BROKER_URL`: URL of the MQTT broker (optional)
 - `MQTT_TOPIC`: MQTT topic for status updates (optional)
 
@@ -154,7 +156,9 @@ The application can be configured using environment variables in the `docker-com
 | `TEST_MODE` | Enable test mode (processes single frame) | No | false |
 | `VERBOSE_LOGGING` | Enable verbose logging | No | false |
 | `APP_AWS_PROFILE` | AWS profile name to use for credentials | No | default |
-| `ANALYSIS_INTERVAL` | Interval between frame analysis in seconds | No | 10 |
+
+| `IMAGES_PER_SERIES` | Number of images to capture in each analysis cycle | No | 3 |
+| `INTERVAL_BETWEEN_IMAGES` | Seconds between image captures in a series | No | 10 |
 | `MQTT_BROKER_URL` | URL of the MQTT broker | No | - |
 | `MQTT_TOPIC` | MQTT topic for status updates | No | - |
 
@@ -190,11 +194,12 @@ The AWS credentials file is mounted into the Docker container as a read-only fil
 
 ### Cost Optimization
 
-The `ANALYSIS_INTERVAL` variable can be used to optimize AWS costs. For example:
-- Setting `ANALYSIS_INTERVAL=30` will reduce AWS Bedrock API calls by 66%
-- Setting `ANALYSIS_INTERVAL=60` will reduce AWS Bedrock API calls by 83%
+You can adjust the number of images per series and intervals to optimize AWS costs:
+- Setting `IMAGES_PER_SERIES=2` will reduce image processing time by 33%
+- Setting `INTERVAL_BETWEEN_IMAGES=5` will reduce the total analysis cycle time by 50%
+- Setting `INTERVAL_BETWEEN_IMAGES=15` will reduce AWS Bedrock API calls by 33%
 
-Choose an interval that balances your need for timely failure detection with your AWS cost requirements.
+Choose settings that balance your need for timely failure detection with your AWS cost requirements.
 
 ## Test Mode
 

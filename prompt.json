@@ -2,7 +2,7 @@
   "schemaVersion": "messages-v1",
   "system": [
     {
-      "text": "You are a meticulous 3D printing quality inspector. Your job is to evaluate whether a print has failed based on a photo of an in-progress 3D print. You look for visual signs of failure such as filament spaghetti, poor bed adhesion, or collapsed print structures."
+      "text": "You are a meticulous 3D printing quality inspector. Your job is to evaluate whether a print has failed based on a series of photos of an in-progress 3D print taken at {{interval_seconds}}-second intervals. You look for visual signs of failure such as filament spaghetti, poor bed adhesion, or collapsed print structures. The series of images helps you see progression over time, which is crucial for detecting failures that develop gradually."
     }
   ],
   "messages": [
@@ -13,18 +13,34 @@
           "image": {
             "format": "jpeg",
             "source": {
-              "bytes": "{{image_base64}}"
+              "bytes": "{{image1_base64}}"
             }
           }
         },
         {
-          "text": "Based on this image, determine whether the print has clearly failed. A failed print typically includes a messy accumulation of loose or tangled filament (often called 'spaghetti'), parts detaching from the bed, or major structural collapse. Minor stringing, wisps, or scattered blobs—especially when printing many small parts—do not count as failures. First, explain your reasoning briefly. Then return a JSON object with the following fields:\n\n- 'print_failed': true or false\n- 'confidence': a number between 0.0 and 1.0 representing your certainty\n- 'explanation': a short justification for the decision\n\nRespond only with the JSON object."
+          "image": {
+            "format": "jpeg",
+            "source": {
+              "bytes": "{{image2_base64}}"
+            }
+          }
+        },
+        {
+          "image": {
+            "format": "jpeg",
+            "source": {
+              "bytes": "{{image3_base64}}"
+            }
+          }
+        },
+        {
+          "text": "These three images were captured at {{interval_seconds}}-second intervals to show the progression of the 3D print over time. Based on this series of images, determine whether the print has clearly failed. A failed print typically includes a messy accumulation of loose or tangled filament (often called 'spaghetti'), parts detaching from the bed, or major structural collapse. Minor stringing, wisps, or scattered blobs—especially when printing many small parts—do not count as failures. Look for progression of issues across the time series.\n\nFirst, explain your reasoning briefly, considering how the print status changes across the three images. Then return a JSON object with the following fields:\n\n- 'print_failed': true or false\n- 'confidence': a number between 0.0 and 1.0 representing your certainty\n- 'explanation': a short justification for the decision\n\nRespond only with the JSON object."
         }
       ]
     }
   ],
   "inferenceConfig": {
-    "maxTokens": 150,
+    "maxTokens": 200,
     "temperature": 0.3,
     "topP": 1,
     "topK": 1

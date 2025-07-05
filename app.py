@@ -35,7 +35,8 @@ INFERENCE_PROFILE_ARN = os.getenv('INFERENCE_PROFILE_ARN')
 TEST_MODE = os.getenv('TEST_MODE', 'false').lower() == 'true'
 VERBOSE_LOGGING = os.getenv('VERBOSE_LOGGING', 'false').lower() == 'true'
 APP_AWS_PROFILE = os.getenv('APP_AWS_PROFILE', 'default')
-ANALYSIS_INTERVAL = int(os.getenv('ANALYSIS_INTERVAL', '10'))  # Default to 10 seconds if not specified
+IMAGES_PER_SERIES = int(os.getenv('IMAGES_PER_SERIES', '3'))  # Number of images to capture in each series
+INTERVAL_BETWEEN_IMAGES = int(os.getenv('INTERVAL_BETWEEN_IMAGES', '10'))  # Seconds between image captures
 
 # Optional MQTT configuration
 MQTT_BROKER_URL = os.getenv('MQTT_BROKER_URL')
@@ -199,23 +200,41 @@ def extract_json_from_bedrock_response(text):
     return json.loads(json_str)
 
 def verify_failure():
-    """Verify a potential failure by analyzing multiple frames."""
-    logger.info("Starting failure verification process...")
+    """Verify a potential failure by analyzing multiple frames in series."""
+    logger.info("Starting failure verification process with multi-image analysis...")
     failures = 0
     total_verifications = 4
+    VERIFICATION_INTERVAL = 2  # Hardcoded 2 second interval for verification only
     
     for i in range(total_verifications):
         try:
-            # Capture a fresh frame for each verification
-            frame = capture_frame(RTSP_URL)
-            if frame is None:
-                logger.error("Failed to capture frame for verification")
-                continue
+            # Capture images at 2-second intervals for this verification
+            image_series = []
+            for j in range(IMAGES_PER_SERIES):
+                if VERBOSE_LOGGING:
+                    logger.info(f"Capturing frame {j+1}/{IMAGES_PER_SERIES} for verification {i+1}/{total_verifications}")
                 
-            # Analyze the frame
+                frame = capture_frame(RTSP_URL)
+                if frame is None:
+                    logger.error(f"Failed to capture frame {j+1} for verification {i+1}")
+                    break
+                
+                image_base64 = encode_image(frame)
+                image_series.append(image_base64)
+                
+                # Wait 2 seconds between captures (except after the last one)
+                if j < IMAGES_PER_SERIES - 1:
+                    time.sleep(VERIFICATION_INTERVAL)
+            
+            # If we didn't get all frames, skip this verification
+            if len(image_series) != IMAGES_PER_SERIES:
+                logger.error(f"Failed to capture all {IMAGES_PER_SERIES} frames for verification {i+1}, skipping")
+                continue
+            
+            # Analyze the series of frames
             if VERBOSE_LOGGING:
-                logger.info(f"Starting verification {i+1}/{total_verifications} with Bedrock")
-            analysis_result = analyze_image_with_bedrock(encode_image(frame))
+                logger.info(f"Starting verification {i+1}/{total_verifications} with Bedrock ({IMAGES_PER_SERIES} images)")
+            analysis_result = analyze_images_with_bedrock(image_series)
             
             # Parse the response
             content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
@@ -229,11 +248,11 @@ def verify_failure():
                 logger.info(f"Verification {i+1}/{total_verifications}: Failure confirmed - {explanation}")
             else:
                 logger.info(f"Verification {i+1}/{total_verifications}: No failure detected")
-                
+            
             # Wait 2 seconds between verifications
             if i < total_verifications - 1:  # Don't wait after the last verification
                 time.sleep(2)
-                
+            
         except Exception as e:
             logger.error(f"Error during verification {i+1}: {str(e)}")
             continue
@@ -241,11 +260,11 @@ def verify_failure():
     logger.info(f"Verification complete: {failures}/{total_verifications} failures detected")
     return failures >= 3  # Return True if 3 or more verifications failed
 
-def analyze_image_with_bedrock(image_base64):
-    """Send image to AWS Bedrock for analysis."""
+def analyze_images_with_bedrock(image_base64_list):
+    """Send multiple images to AWS Bedrock for analysis."""
     global bedrock
     if VERBOSE_LOGGING:
-        logger.info("Sending image to Bedrock for analysis")
+        logger.info(f"Sending {len(image_base64_list)} images to Bedrock for analysis")
     
     # Load and prepare the prompt template
     try:
@@ -255,9 +274,15 @@ def analyze_image_with_bedrock(image_base64):
         logger.error(f"Failed to load prompt template: {e}")
         raise
     
-    # Replace the image_base64 placeholder
+    # Replace the image_base64 placeholders
     prompt_str = json.dumps(prompt_template)
-    prompt_str = prompt_str.replace('"{{image_base64}}"', f'"{image_base64}"')
+    for i, image_base64 in enumerate(image_base64_list, 1):
+        placeholder = f'"{{{{image{i}_base64}}}}"'
+        prompt_str = prompt_str.replace(placeholder, f'"{image_base64}"')
+    
+    # Replace the interval_seconds placeholder with the actual configuration value
+    prompt_str = prompt_str.replace('{{interval_seconds}}', str(INTERVAL_BETWEEN_IMAGES))
+    
     prompt = json.loads(prompt_str)
     
     max_retries = 5
@@ -299,6 +324,10 @@ def analyze_image_with_bedrock(image_base64):
                 continue  # Retry once after refreshing credentials
             logger.error(f"Unexpected error in Bedrock analysis: {str(e)}")
             raise
+
+def analyze_image_with_bedrock(image_base64):
+    """Send single image to AWS Bedrock for analysis (backward compatibility)."""
+    return analyze_images_with_bedrock([image_base64])
 
 def send_to_discord(image_path, analysis_result, explanation):
     """Send analysis results to Discord webhook"""
@@ -373,7 +402,7 @@ def publish_status(print_failed, description):
             logger.error(f"Failed to publish to MQTT: {e}")
 
 def process_frame():
-    """Process a single frame."""
+    """Process a series of frames captured at intervals."""
     try:
         # Check if we're in cooldown period
         global last_failure_time
@@ -381,32 +410,45 @@ def process_frame():
             logger.info(f"In cooldown period until {last_failure_time + timedelta(minutes=15)}. Skipping Bedrock analysis.")
             return
 
-        # Capture frame
-        frame = capture_frame(RTSP_URL)
-        if frame is None:
-            logger.error("Failed to capture frame - frame is None")
-            return
+        # Capture 3 frames at 10-second intervals
+        image_series = []
+        temp_image_paths = []
         
-        # Save frame as temporary image file
-        temp_image_path = '/tmp/analyzed_frame.jpg'
-        try:
-            cv2.imwrite(temp_image_path, frame)
-        except Exception as e:
-            logger.error(f"Failed to save frame to temporary file: {e}")
-            return
+        for i in range(IMAGES_PER_SERIES):
+            if VERBOSE_LOGGING:
+                logger.info(f"Capturing frame {i+1}/{IMAGES_PER_SERIES} for analysis")
+            
+            frame = capture_frame(RTSP_URL)
+            if frame is None:
+                logger.error(f"Failed to capture frame {i+1} - frame is None")
+                return
+            
+            # Save frame as temporary image file
+            temp_image_path = f'/tmp/analyzed_frame_{i+1}.jpg'
+            try:
+                cv2.imwrite(temp_image_path, frame)
+                temp_image_paths.append(temp_image_path)
+            except Exception as e:
+                logger.error(f"Failed to save frame {i+1} to temporary file: {e}")
+                return
+            
+            # Encode image
+            try:
+                image_base64 = encode_image(frame)
+                image_series.append(image_base64)
+            except Exception as e:
+                logger.error(f"Failed to encode image {i+1}: {e}")
+                return
+            
+            # Wait between captures (except after the last one)
+            if i < IMAGES_PER_SERIES - 1:  # Don't wait after the last frame
+                time.sleep(INTERVAL_BETWEEN_IMAGES)
         
-        # Encode image
+        # Initial analysis with Bedrock using all 3 images
         try:
-            image_base64 = encode_image(frame)
+            analysis_result = analyze_images_with_bedrock(image_series)
         except Exception as e:
-            logger.error(f"Failed to encode image: {e}")
-            return
-        
-        # Initial analysis with Bedrock
-        try:
-            analysis_result = analyze_image_with_bedrock(image_base64)
-        except Exception as e:
-            logger.error(f"Failed to analyze image with Bedrock: {e}")
+            logger.error(f"Failed to analyze images with Bedrock: {e}")
             return
         
         # Check if a print failure was detected
@@ -452,7 +494,8 @@ def process_frame():
         if print_failed:
             if DISCORD_WEBHOOK_URL:
                 try:
-                    if send_to_discord(temp_image_path, analysis_result, explanation):
+                    # Use the first image for Discord (representative of the series)
+                    if send_to_discord(temp_image_paths[0], analysis_result, explanation):
                         if VERBOSE_LOGGING:
                             logger.info(f"Successfully processed and sent analysis at {datetime.now()}")
                         last_failure_time = datetime.now()
@@ -467,11 +510,12 @@ def process_frame():
         else:
             logger.info(f"No print failure detected at {datetime.now()}")
         
-        # Clean up temporary image file
-        try:
-            os.remove(temp_image_path)
-        except Exception as e:
-            logger.warning(f"Failed to remove temporary image file: {e}")
+        # Clean up temporary image files
+        for temp_image_path in temp_image_paths:
+            try:
+                os.remove(temp_image_path)
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary image file {temp_image_path}: {e}")
         
     except Exception as e:
         logger.error(f"Error occurred in process_frame: {str(e)}", exc_info=True)
@@ -484,7 +528,13 @@ def main():
         while True:
             time.sleep(3600)  # Sleep for an hour
     else:
-        logger.info(f"Running in continuous mode - processing frames every {ANALYSIS_INTERVAL} seconds")
+        # Calculate total time for one analysis cycle
+        total_analysis_time = (IMAGES_PER_SERIES - 1) * INTERVAL_BETWEEN_IMAGES
+        
+        logger.info(f"Running in continuous mode - processing {IMAGES_PER_SERIES} images")
+        logger.info(f"Each analysis cycle captures {IMAGES_PER_SERIES} images at {INTERVAL_BETWEEN_IMAGES}-second intervals (total: {total_analysis_time}s)")
+        logger.info(f"Analysis cycles run continuously with no additional wait time")
+        
         consecutive_errors = 0
         max_consecutive_errors = 5
         error_cooldown = 60  # seconds to wait after multiple errors
@@ -493,7 +543,7 @@ def main():
             try:
                 process_frame()
                 consecutive_errors = 0  # Reset error counter on success
-                time.sleep(ANALYSIS_INTERVAL)
+                # No additional wait time - next cycle starts immediately
             except Exception as e:
                 consecutive_errors += 1
                 logger.error(f"Error in main loop: {str(e)}", exc_info=True)
@@ -503,8 +553,8 @@ def main():
                     time.sleep(error_cooldown)
                     consecutive_errors = 0  # Reset after cooldown
                 else:
-                    # Wait a bit longer than usual before retrying
-                    time.sleep(ANALYSIS_INTERVAL * 2)
+                    # Wait a bit before retrying
+                    time.sleep(10)
 
 if __name__ == "__main__":
     main() 
