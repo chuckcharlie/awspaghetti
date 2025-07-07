@@ -85,7 +85,11 @@ The system implements several recovery mechanisms:
 
 1. **Consecutive Errors**: After 5 consecutive errors, the system waits for 60 seconds before retrying
 2. **AWS Throttling**: Implements exponential backoff with jitter for Bedrock API calls
-3. **Credential Expiration**: Automatically refreshes AWS credentials when they expire
+3. **AWS Session Management**: 
+   - Automatically reloads credentials from the mounted file when they expire
+   - Gracefully handles expired token errors with automatic recovery
+   - Retries operations after credential refresh
+   - Works seamlessly with external credential update scripts
 4. **Camera Feed**: Implements timeout and retry logic for frame capture
 
 ## Logging
@@ -199,6 +203,8 @@ When `TEST_MODE` is set to `true`, the application will not automatically proces
 ```bash
 docker exec -it rtsp-bedrock-discord python -c "from app import process_frame; process_frame()"
 ```
+
+
 
 ## Verbose Logging
 

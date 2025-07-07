@@ -234,7 +234,25 @@ def verify_failure():
             # Analyze the series of frames
             if VERBOSE_LOGGING:
                 logger.info(f"Starting verification {i+1}/{total_verifications} with Bedrock ({IMAGES_PER_SERIES} images)")
-            analysis_result = analyze_images_with_bedrock(image_series)
+            try:
+                analysis_result = analyze_images_with_bedrock(image_series)
+            except Exception as e:
+                error_msg = str(e)
+                if any(token_error in error_msg for token_error in ['ExpiredToken', 'TokenExpired', 'ExpiredTokenException', 'InvalidToken']):
+                    logger.warning(f"AWS session error during verification {i+1}, attempting to refresh...")
+                    if refresh_aws_session():
+                        logger.info("AWS session refreshed, retrying verification...")
+                        try:
+                            analysis_result = analyze_images_with_bedrock(image_series)
+                        except Exception as retry_error:
+                            logger.error(f"Failed to retry verification {i+1} after session refresh: {retry_error}")
+                            continue
+                    else:
+                        logger.error(f"Failed to refresh AWS session during verification {i+1}")
+                        continue
+                else:
+                    logger.error(f"Error during verification {i+1}: {error_msg}")
+                    continue
             
             # Parse the response
             content_text = analysis_result.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
@@ -317,13 +335,21 @@ def analyze_images_with_bedrock(image_base64_list):
                 raise
                 
         except Exception as e:
-            # Check for ExpiredTokenException in the error message
-            if 'ExpiredTokenException' in str(e):
-                logger.warning("AWS credentials expired, reloading and retrying...")
-                bedrock = get_aws_session()
-                continue  # Retry once after refreshing credentials
-            logger.error(f"Unexpected error in Bedrock analysis: {str(e)}")
-            raise
+            error_msg = str(e)
+            # Check for various expired token error patterns
+            if any(token_error in error_msg for token_error in ['ExpiredToken', 'TokenExpired', 'ExpiredTokenException', 'InvalidToken']):
+                logger.warning(f"AWS credentials expired: {error_msg}")
+                logger.info("Reloading credentials from mounted file...")
+                try:
+                    bedrock = get_aws_session()  # This will reload fresh credentials from the mounted file
+                    logger.info("Successfully reloaded AWS credentials")
+                    continue  # Retry the request with fresh credentials
+                except Exception as refresh_error:
+                    logger.error(f"Failed to reload AWS credentials: {refresh_error}")
+                    raise
+            else:
+                logger.error(f"Unexpected error in Bedrock analysis: {error_msg}")
+                raise
 
 def analyze_image_with_bedrock(image_base64):
     """Send single image to AWS Bedrock for analysis (backward compatibility)."""
@@ -401,6 +427,18 @@ def publish_status(print_failed, description):
         except Exception as e:
             logger.error(f"Failed to publish to MQTT: {e}")
 
+def refresh_aws_session():
+    """Refresh the AWS session by reloading credentials from the mounted file."""
+    global bedrock
+    logger.info("Refreshing AWS session from mounted credentials file...")
+    try:
+        bedrock = get_aws_session()
+        logger.info("AWS session refreshed successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to refresh AWS session: {e}")
+        return False
+
 def process_frame():
     """Process a series of frames captured at intervals."""
     try:
@@ -448,8 +486,22 @@ def process_frame():
         try:
             analysis_result = analyze_images_with_bedrock(image_series)
         except Exception as e:
-            logger.error(f"Failed to analyze images with Bedrock: {e}")
-            return False
+            error_msg = str(e)
+            if any(token_error in error_msg for token_error in ['ExpiredToken', 'TokenExpired', 'ExpiredTokenException', 'InvalidToken']):
+                logger.warning("AWS session error during initial analysis, attempting to refresh...")
+                if refresh_aws_session():
+                    logger.info("AWS session refreshed, retrying initial analysis...")
+                    try:
+                        analysis_result = analyze_images_with_bedrock(image_series)
+                    except Exception as retry_error:
+                        logger.error(f"Failed to retry initial analysis after session refresh: {retry_error}")
+                        return False
+                else:
+                    logger.error("Failed to refresh AWS session during initial analysis")
+                    return False
+            else:
+                logger.error(f"Failed to analyze images with Bedrock: {error_msg}")
+                return False
         
         # Check if a print failure was detected
         try:
@@ -566,8 +618,20 @@ def main():
                     time.sleep(30)  # Wait 30 seconds before checking cooldown again
                 # No additional wait time - next cycle starts immediately
             except Exception as e:
+                error_msg = str(e)
                 consecutive_errors += 1
-                logger.error(f"Error in main loop: {str(e)}", exc_info=True)
+                logger.error(f"Error in main loop: {error_msg}", exc_info=True)
+                
+                # Check if this is an AWS session related error
+                if any(token_error in error_msg for token_error in ['ExpiredToken', 'TokenExpired', 'ExpiredTokenException', 'InvalidToken']):
+                    logger.warning("AWS session error detected, attempting to refresh...")
+                    if refresh_aws_session():
+                        logger.info("AWS session refreshed, continuing...")
+                        consecutive_errors = 0  # Reset error counter after successful refresh
+                        continue
+                    else:
+                        logger.error("Failed to refresh AWS session")
+                        # Continue with normal error handling
                 
                 if consecutive_errors >= max_consecutive_errors:
                     logger.error(f"Too many consecutive errors ({consecutive_errors}). Waiting {error_cooldown} seconds before retrying...")
