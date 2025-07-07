@@ -23,7 +23,7 @@ services:
       - VERBOSE_LOGGING=false
       - APP_AWS_PROFILE=default
       - IMAGES_PER_SERIES=3
-      - INTERVAL_BETWEEN_IMAGES=5
+      - INTERVAL_BETWEEN_IMAGES=10
       
       # Optional: MQTT Configuration
       # - MQTT_BROKER_URL=mqtt://your-broker:1883

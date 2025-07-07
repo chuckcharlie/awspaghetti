@@ -14,30 +14,31 @@ This application monitors a 3D printer using an RTSP camera feed and AWS Bedrock
 
 ## How It Works
 
-1. **Multi-Image Capture**: The application captures a series of 3 images from the RTSP camera feed at 10-second intervals to show progression over time.
+1. **Multi-Image Capture**: The application captures a series of 3 images from the RTSP camera feed at configurable intervals (default: 10 seconds) to show progression over time.
 
 2. **AI Analysis**: When not in cooldown:
    - The series of images is analyzed together using AWS Bedrock to detect potential print failures
    - The AI model looks for signs of failure such as loose or tangled filament (known as "spaghetti") and progression of issues across the time series
    - This multi-image approach provides better context for detecting failures that develop gradually
 
-3. **Cooldown Period**: 
-   - After a failure is detected and confirmed, a 15-minute cooldown period begins
-   - During this period, no Bedrock analysis or verifications are performed
-   - This helps reduce API costs and unnecessary processing
-   - The system logs when it's in cooldown and when the cooldown will end
-
-4. **Verification Process**: When a potential failure is detected:
+3. **Verification Process**: When a potential failure is detected:
    - The system immediately captures 4 additional series of 3 images each from the camera
    - Each verification series uses 2-second intervals between images (hardcoded for speed, separate from main analysis timing)
    - A failure is only confirmed if at least 3 out of 4 verifications detect a failure
    - This helps prevent false positives while ensuring timely detection
 
+4. **Cooldown Period**: 
+   - After a failure is detected and confirmed, a 15-minute cooldown period begins
+   - During this period, no Bedrock analysis or verifications are performed
+   - This helps reduce API costs and unnecessary processing
+   - The system logs when it's in cooldown and when the cooldown will end
+   - During cooldown, the system waits 30 seconds between checks to avoid excessive logging
+
 5. **Notifications**: If a failure is confirmed:
    - The 15-minute cooldown period begins
    - Optional notification methods (if configured):
      - Discord: Sends a critical alert with:
-       - The captured image showing the failure
+       - A fresh image captured at the time of the alert (not from the analysis series)
        - A detailed explanation of why the failure was detected
        - A request to verify in person
      - MQTT: Publishes status updates to the configured topic
@@ -134,17 +135,7 @@ docker compose logs -f
 docker compose down
 ```
 
-## Features
 
-- Captures frames from RTSP stream every 10 seconds
-- Analyzes images using AWS Bedrock
-- Sends formatted results to Discord webhook
-- Automatic error handling and retries
-- Containerized for easy deployment
-
-## Configuration
-
-The application can be configured using environment variables in the `docker-compose.yml` file:
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
@@ -186,7 +177,7 @@ When MQTT is configured, the application will publish status updates to the spec
 }
 ```
 
-The status is published every time a frame is analyzed, regardless of whether a Discord notification is sent. This allows other systems to monitor the print status in real-time.
+The status is published every time the main analysis cycle runs, regardless of whether a Discord notification is sent. This allows other systems to monitor the print status in real-time.
 
 ### Volume Mounting
 

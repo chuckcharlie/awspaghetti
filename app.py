@@ -408,7 +408,7 @@ def process_frame():
         global last_failure_time
         if last_failure_time is not None and datetime.now() - last_failure_time <= timedelta(minutes=15):
             logger.info(f"In cooldown period until {last_failure_time + timedelta(minutes=15)}. Skipping Bedrock analysis.")
-            return
+            return True  # Indicate we were in cooldown
 
         # Capture 3 frames at 10-second intervals
         image_series = []
@@ -421,7 +421,7 @@ def process_frame():
             frame = capture_frame(RTSP_URL)
             if frame is None:
                 logger.error(f"Failed to capture frame {i+1} - frame is None")
-                return
+                return False
             
             # Save frame as temporary image file
             temp_image_path = f'/tmp/analyzed_frame_{i+1}.jpg'
@@ -430,7 +430,7 @@ def process_frame():
                 temp_image_paths.append(temp_image_path)
             except Exception as e:
                 logger.error(f"Failed to save frame {i+1} to temporary file: {e}")
-                return
+                return False
             
             # Encode image
             try:
@@ -438,7 +438,7 @@ def process_frame():
                 image_series.append(image_base64)
             except Exception as e:
                 logger.error(f"Failed to encode image {i+1}: {e}")
-                return
+                return False
             
             # Wait between captures (except after the last one)
             if i < IMAGES_PER_SERIES - 1:  # Don't wait after the last frame
@@ -449,7 +449,7 @@ def process_frame():
             analysis_result = analyze_images_with_bedrock(image_series)
         except Exception as e:
             logger.error(f"Failed to analyze images with Bedrock: {e}")
-            return
+            return False
         
         # Check if a print failure was detected
         try:
@@ -474,7 +474,7 @@ def process_frame():
             
         except Exception as e:
             logger.error(f"Failed to parse analysis result: {e}")
-            return
+            return False
 
         # Determine description
         if print_failed is True:
@@ -494,13 +494,28 @@ def process_frame():
         if print_failed:
             if DISCORD_WEBHOOK_URL:
                 try:
-                    # Use the first image for Discord (representative of the series)
-                    if send_to_discord(temp_image_paths[0], analysis_result, explanation):
-                        if VERBOSE_LOGGING:
-                            logger.info(f"Successfully processed and sent analysis at {datetime.now()}")
-                        last_failure_time = datetime.now()
+                    # Capture a fresh image for Discord alert
+                    logger.info("Capturing fresh image for Discord alert")
+                    fresh_frame = capture_frame(RTSP_URL)
+                    if fresh_frame is not None:
+                        fresh_image_path = '/tmp/discord_alert_image.jpg'
+                        try:
+                            cv2.imwrite(fresh_image_path, fresh_frame)
+                            if send_to_discord(fresh_image_path, analysis_result, explanation):
+                                if VERBOSE_LOGGING:
+                                    logger.info(f"Successfully processed and sent analysis at {datetime.now()}")
+                                last_failure_time = datetime.now()
+                            else:
+                                logger.error(f"Failed to send to Discord at {datetime.now()}")
+                            # Clean up the fresh image
+                            try:
+                                os.remove(fresh_image_path)
+                            except Exception as e:
+                                logger.warning(f"Failed to remove Discord alert image: {e}")
+                        except Exception as e:
+                            logger.error(f"Failed to save fresh image for Discord: {e}")
                     else:
-                        logger.error(f"Failed to send to Discord at {datetime.now()}")
+                        logger.error("Failed to capture fresh image for Discord alert")
                 except Exception as e:
                     logger.error(f"Error sending to Discord: {e}")
             else:
@@ -516,6 +531,8 @@ def process_frame():
                 os.remove(temp_image_path)
             except Exception as e:
                 logger.warning(f"Failed to remove temporary image file {temp_image_path}: {e}")
+        
+        return False  # Indicate we were not in cooldown
         
     except Exception as e:
         logger.error(f"Error occurred in process_frame: {str(e)}", exc_info=True)
@@ -541,8 +558,12 @@ def main():
         
         while True:
             try:
-                process_frame()
+                was_in_cooldown = process_frame()
                 consecutive_errors = 0  # Reset error counter on success
+                
+                # If we were in cooldown, wait before checking again
+                if was_in_cooldown:
+                    time.sleep(30)  # Wait 30 seconds before checking cooldown again
                 # No additional wait time - next cycle starts immediately
             except Exception as e:
                 consecutive_errors += 1
