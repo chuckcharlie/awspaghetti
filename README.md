@@ -117,6 +117,46 @@ The application requires AWS credentials to assume a role that has permissions t
 - The application uses `bedrock:InvokeModel` (non-streaming) and does not require `bedrock:InvokeModelWithResponseStream` permissions.
 - The resource ARNs above are for Nova Premier which is the model I am using. This application has also been tested with Nova Pro, but I am not sure if one is better than the other. Replace them with the appropriate ARNs for your inference profile and models.
 
+#### AWS Credentials File Format
+
+The application expects the credentials file to be in the standard AWS credentials format:
+
+```ini
+[profile-name]
+aws_access_key_id = YOUR_ACCESS_KEY_ID
+aws_secret_access_key = YOUR_SECRET_ACCESS_KEY
+aws_session_token = YOUR_SESSION_TOKEN
+region = us-west-2
+```
+
+**Using AWS Vault for Temporary Credentials:**
+
+This repository includes a script (`Scripts/write-temp-creds.sh`) that can help manage temporary credentials using AWS Vault and GPG via pass. This is useful for automatically refreshing credentials before they expire.
+
+```bash
+# Usage
+./Scripts/write-temp-creds.sh <profile-name>
+
+# Example
+./Scripts/write-temp-creds.sh my-aws-profile
+```
+
+The script will:
+1. Use AWS Vault to fetch temporary credentials for the specified profile
+2. Write them to `~/aws-temp-creds/<profile-name>-credentials` in the correct format
+3. Also create an environment file at `~/aws-temp-creds/<profile-name>-env`
+
+You can then mount the credentials file in your docker-compose.yml:
+```yaml
+volumes:
+  - ~/aws-temp-creds/my-aws-profile-credentials:/creds/credentials:ro
+```
+
+**Prerequisites for the script:**
+- [AWS Vault](https://github.com/99designs/aws-vault) installed and configured
+- GPG and pass set up for secure credential storage
+- A profile configured in AWS Vault
+
 ## Docker Deployment
 
 The application is containerized and can be deployed using Docker. The container requires:
