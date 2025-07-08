@@ -70,11 +70,52 @@ The application is configured through environment variables:
 
 ### AWS Credentials and Role Assumption
 
-The application requires AWS credentials to access Bedrock. These credentials are provided by mounting an AWS credentials file into the container at `/creds/credentials`. The application reads the credentials for the specified profile (`APP_AWS_PROFILE`, default: `default`) and uses them to assume the role specified by `AWS_ROLE_ARN`.
+The application requires AWS credentials to assume a role that has permissions to access Bedrock. These credentials are provided by mounting an AWS credentials file into the container at `/creds/credentials`. The application reads the credentials for the specified profile (`APP_AWS_PROFILE`, default: `default`) and uses them to assume the role specified by `AWS_ROLE_ARN`.
 
 - **Role Assumption:** The application uses the credentials from the mounted file to call AWS STS and assume the specified role. It then uses the temporary credentials from the assumed role to access AWS Bedrock.
 - **Credential Expiry Handling:** If the temporary credentials expire (e.g., due to session timeout), the application automatically reloads the credentials from the mounted file and re-assumes the role, ensuring uninterrupted operation. This works seamlessly with external credential refreshers (such as scripts or tools that update the credentials file).
 - **Security:** The credentials file is mounted as read-only, and no credentials are hardcoded in the application or image.
+
+#### Required AWS Permissions
+
+**For the user/credentials that will assume the role:**
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Resource": "arn:aws:iam::<account>:role/<role name>"
+        }
+    ]
+}
+```
+
+**For the role that will access Bedrock:**
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "bedrock:InvokeModel",
+            "Resource": [
+                "arn:aws:bedrock:us-west-2:<account-id>:inference-profile/us.amazon.nova-premier-v1",
+                "arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-premier-v1:*",
+                "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-premier-v1:*",
+                "arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-premier-v1:*"
+            ]
+        }
+    ]
+}
+```
+
+**Note:**
+- When using inference profiles, AWS Bedrock may forward requests to the region where the underlying model is hosted, even if your profile is in a different region. This means your IAM policy must allow `bedrock:InvokeModel` on the inference profile ARN **and** on the foundation model ARNs in all regions where the model may run (e.g., `us-west-2`, `us-east-1`, `us-east-2`). Adjust the regions and model IDs as needed for your use case.
+- The application uses `bedrock:InvokeModel` (non-streaming) and does not require `bedrock:InvokeModelWithResponseStream` permissions.
+- The resource ARNs above are for Nova Premier which is the model I am using. This application has also been tested with Nova Pro, but I am not sure if one is better than the other. Replace them with the appropriate ARNs for your inference profile and models.
 
 ## Docker Deployment
 
