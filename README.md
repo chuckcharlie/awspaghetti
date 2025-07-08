@@ -53,19 +53,28 @@ This application monitors a 3D printer using an RTSP camera feed and AWS Bedrock
 
 The application is configured through environment variables:
 
-- `RTSP_URL`: URL of the RTSP camera feed
-- `DISCORD_WEBHOOK_URL`: Discord webhook URL for notifications (optional)
-- `AWS_REGION`: AWS region (default: us-west-2)
-- `AWS_ROLE_ARN`: ARN of the AWS role to assume
-- `INFERENCE_PROFILE_ARN`: ARN of the Bedrock inference profile
-- `TEST_MODE`: Enable test mode (true/false)
-- `VERBOSE_LOGGING`: Enable verbose logging (true/false)
-- `APP_AWS_PROFILE`: AWS profile to use (default: default)
+| Variable                | Description                                              | Required | Default      |
+|-------------------------|----------------------------------------------------------|----------|--------------|
+| `RTSP_URL`              | URL of the RTSP stream to analyze                        | Yes      | -            |
+| `DISCORD_WEBHOOK_URL`   | Discord webhook URL for notifications                    | No       | -            |
+| `AWS_REGION`            | AWS region for Bedrock service                           | No       | us-west-2    |
+| `AWS_ROLE_ARN`          | ARN of the AWS role to assume                            | Yes      | -            |
+| `INFERENCE_PROFILE_ARN` | ARN of the Bedrock inference profile                     | Yes      | -            |
+| `TEST_MODE`             | Enable test mode (processes single frame)                | No       | false        |
+| `VERBOSE_LOGGING`       | Enable verbose logging                                   | No       | false        |
+| `APP_AWS_PROFILE`       | AWS profile name to use for credentials                  | No       | default      |
+| `IMAGES_PER_SERIES`     | Number of images to capture in each analysis cycle       | No       | 3            |
+| `INTERVAL_BETWEEN_IMAGES`| Seconds between image captures in a series              | No       | 10           |
+| `MQTT_BROKER_URL`       | URL of the MQTT broker                                   | No       | -            |
+| `MQTT_TOPIC`            | MQTT topic for status updates                            | No       | -            |
 
-- `IMAGES_PER_SERIES`: Number of images to capture in each analysis cycle (default: 3)
-- `INTERVAL_BETWEEN_IMAGES`: Seconds between image captures in a series (default: 10)
-- `MQTT_BROKER_URL`: URL of the MQTT broker (optional)
-- `MQTT_TOPIC`: MQTT topic for status updates (optional)
+### AWS Credentials and Role Assumption
+
+The application requires AWS credentials to access Bedrock. These credentials are provided by mounting an AWS credentials file into the container at `/creds/credentials`. The application reads the credentials for the specified profile (`APP_AWS_PROFILE`, default: `default`) and uses them to assume the role specified by `AWS_ROLE_ARN`.
+
+- **Role Assumption:** The application uses the credentials from the mounted file to call AWS STS and assume the specified role. It then uses the temporary credentials from the assumed role to access AWS Bedrock.
+- **Credential Expiry Handling:** If the temporary credentials expire (e.g., due to session timeout), the application automatically reloads the credentials from the mounted file and re-assumes the role, ensuring uninterrupted operation. This works seamlessly with external credential refreshers (such as scripts or tools that update the credentials file).
+- **Security:** The credentials file is mounted as read-only, and no credentials are hardcoded in the application or image.
 
 ## Docker Deployment
 
@@ -139,25 +148,7 @@ docker compose logs -f
 docker compose down
 ```
 
-
-
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `RTSP_URL` | URL of the RTSP stream to analyze | Yes | - |
-| `DISCORD_WEBHOOK_URL` | Discord webhook URL for notifications | No | - |
-| `AWS_REGION` | AWS region for Bedrock service | No | us-west-2 |
-| `AWS_ROLE_ARN` | ARN of the AWS role to assume | Yes | - |
-| `INFERENCE_PROFILE_ARN` | ARN of the Bedrock inference profile | Yes | - |
-| `TEST_MODE` | Enable test mode (processes single frame) | No | false |
-| `VERBOSE_LOGGING` | Enable verbose logging | No | false |
-| `APP_AWS_PROFILE` | AWS profile name to use for credentials | No | default |
-
-| `IMAGES_PER_SERIES` | Number of images to capture in each analysis cycle | No | 3 |
-| `INTERVAL_BETWEEN_IMAGES` | Seconds between image captures in a series | No | 10 |
-| `MQTT_BROKER_URL` | URL of the MQTT broker | No | - |
-| `MQTT_TOPIC` | MQTT topic for status updates | No | - |
-
-### Optional Features
+## Optional Features
 
 #### Discord Integration
 To enable Discord notifications, set the `DISCORD_WEBHOOK_URL` environment variable in your `docker-compose.yml`:
@@ -203,8 +194,6 @@ When `TEST_MODE` is set to `true`, the application will not automatically proces
 ```bash
 docker exec -it rtsp-bedrock-discord python -c "from app import process_frame; process_frame()"
 ```
-
-
 
 ## Verbose Logging
 
