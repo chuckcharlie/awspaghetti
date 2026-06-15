@@ -2,12 +2,15 @@
 
 This application monitors a 3D printer using an RTSP camera feed and AWS Bedrock to detect print failures. It uses computer vision and AI to analyze the printer's status and sends notifications when failures are detected.
 
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Features
 
 - Real-time monitoring of 3D printer via RTSP camera feed
 - AI-powered failure detection using AWS Bedrock
 - Optional Discord notifications for critical failures
 - Optional MQTT status updates
+- Optional MQTT trigger gate (only run analysis while a print is active)
 - Robust error handling and automatic recovery
 - Configurable analysis intervals
 - Test mode for manual triggering
@@ -60,13 +63,14 @@ The application is configured through environment variables:
 | `AWS_REGION`            | AWS region for Bedrock service                           | No       | us-west-2    |
 | `AWS_ROLE_ARN`          | ARN of the AWS role to assume                            | Yes      | -            |
 | `INFERENCE_PROFILE_ARN` | ARN of the Bedrock inference profile                     | Yes      | -            |
-| `TEST_MODE`             | Enable test mode (processes single frame)                | No       | false        |
+| `TEST_MODE`             | Wait for a manual trigger instead of running continuously| No       | false        |
 | `VERBOSE_LOGGING`       | Enable verbose logging                                   | No       | false        |
 | `APP_AWS_PROFILE`       | AWS profile name to use for credentials                  | No       | default      |
 | `IMAGES_PER_SERIES`     | Number of images to capture in each analysis cycle       | No       | 3            |
 | `INTERVAL_BETWEEN_IMAGES`| Seconds between image captures in a series              | No       | 10           |
 | `MQTT_BROKER_URL`       | URL of the MQTT broker                                   | No       | -            |
 | `MQTT_TOPIC`            | MQTT topic for status updates                            | No       | -            |
+| `MQTT_TRIGGER_TOPIC`    | MQTT topic to gate analysis on (see MQTT Integration)    | No       | -            |
 
 ### AWS Credentials and Role Assumption
 
@@ -255,6 +259,33 @@ When MQTT is configured, the application will publish status updates to the spec
 
 The status is published every time the main analysis cycle runs, regardless of whether a Discord notification is sent. This allows other systems to monitor the print status in real-time.
 
+##### MQTT Trigger Gate
+
+By default the app analyzes the RTSP feed continuously. If you only want it running while a print is actually in progress (e.g. to avoid Bedrock costs when the printer is idle), set `MQTT_TRIGGER_TOPIC` to a topic of your choice. When set:
+
+- The app subscribes to that topic on connect (and resubscribes on reconnect, so retained messages are picked up).
+- Analysis only runs while the latest payload on that topic indicates the gate is enabled.
+- If the broker is disconnected or no payload has been seen, the gate defaults to **off** (fail-safe — nothing runs).
+
+Accepted "enabled" payloads:
+
+- JSON with an `enabled` field: `{"enabled": true}`, `{"enabled": 1}`, `{"enabled": "yes"}`
+- A truthy scalar string: `true`, `1`, `enabled`, `yes`, `on`
+
+Anything else flips the gate off.
+
+Example — turn analysis on:
+```bash
+mosquitto_pub -h your-broker -t printdetect/enabled -r -m '{"enabled": true}'
+```
+
+Turn it off:
+```bash
+mosquitto_pub -h your-broker -t printdetect/enabled -r -m '{"enabled": false}'
+```
+
+The `-r` flag publishes the message as retained, so a freshly started container picks up the current state immediately. Whatever automation knows about your print lifecycle (OctoPrint plugin, Home Assistant, Klipper macro, etc.) is responsible for publishing the `true` / `false` transitions.
+
 ### Volume Mounting
 
 The AWS credentials file is mounted into the Docker container as a read-only file. This is done by specifying the path to the credentials file on the host and the path inside the container where it will be mounted. The `:ro` suffix ensures that the file is mounted as read-only.
@@ -270,11 +301,15 @@ Choose settings that balance your need for timely failure detection with your AW
 
 ## Test Mode
 
-When `TEST_MODE` is set to `true`, the application will not automatically process frames. Instead, it will wait for a manual trigger. You can trigger the workflow manually using the following one-liner:
+When `TEST_MODE` is set to `true`, the application will not automatically process frames. Instead, it will wait for a manual trigger. You can trigger one analysis cycle manually with the bundled `trigger.py` script:
 
 ```bash
-docker exec -it rtsp-bedrock-discord python -c "from app import process_frame; process_frame()"
+docker exec -it rtsp-processor python trigger.py
 ```
+
+(Replace `rtsp-processor` with your `container_name` if you changed it in `docker-compose.yml`.)
+
+> **Note:** If `MQTT_TRIGGER_TOPIC` is configured, manual triggers are still subject to the trigger gate — `process_frame()` will skip unless the gate is enabled. Leave `MQTT_TRIGGER_TOPIC` unset if you want manual triggers to always run.
 
 ## Verbose Logging
 
