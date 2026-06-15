@@ -41,6 +41,9 @@ INTERVAL_BETWEEN_IMAGES = int(os.getenv('INTERVAL_BETWEEN_IMAGES', '10'))  # Sec
 # Optional MQTT configuration
 MQTT_BROKER_URL = os.getenv('MQTT_BROKER_URL')
 MQTT_TOPIC = os.getenv('MQTT_TOPIC')
+# Optional MQTT trigger topic. When set, analysis only runs while this topic
+# carries a payload indicating the gate is enabled (e.g. {"enabled": true}).
+MQTT_TRIGGER_TOPIC = os.getenv('MQTT_TRIGGER_TOPIC')
 
 # Track the last time a failure was detected
 last_failure_time = None
@@ -48,15 +51,95 @@ last_failure_time = None
 # Track the last 5 analysis results
 failure_window = deque(maxlen=5)
 
+# Trigger gate state. When MQTT_TRIGGER_TOPIC is set, this is updated by
+# incoming messages and analysis is gated on it. Defaults to False (fail-safe:
+# don't run unless we have explicit confirmation the gate is enabled).
+mqtt_trigger_enabled = False
+
+
+def _parse_trigger_payload(payload_bytes):
+    """Interpret a trigger-topic payload as enabled/disabled.
+
+    Accepts JSON like {"enabled": true} or scalar truthy strings such as
+    "true", "1", "enabled", "yes", "on". Anything else is treated as disabled.
+    """
+    try:
+        text = payload_bytes.decode('utf-8', errors='replace').strip()
+    except Exception:
+        return False
+
+    if not text:
+        return False
+
+    # Try JSON first
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            value = parsed.get('enabled')
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return value != 0
+            if isinstance(value, str):
+                return value.strip().lower() in ('true', '1', 'enabled', 'yes', 'on')
+            return False
+        if isinstance(parsed, bool):
+            return parsed
+        if isinstance(parsed, (int, float)):
+            return parsed != 0
+        if isinstance(parsed, str):
+            return parsed.strip().lower() in ('true', '1', 'enabled', 'yes', 'on')
+    except (ValueError, TypeError):
+        pass
+
+    return text.lower() in ('true', '1', 'enabled', 'yes', 'on')
+
+
+def _on_mqtt_connect(client, userdata, flags, rc):
+    if rc != 0:
+        logger.error(f"MQTT connect failed with code {rc}")
+        return
+    logger.info("MQTT connected")
+    if MQTT_TRIGGER_TOPIC:
+        # Resubscribe on every (re)connect so we pick up retained payloads.
+        client.subscribe(MQTT_TRIGGER_TOPIC, qos=1)
+        logger.info(f"Subscribed to trigger topic {MQTT_TRIGGER_TOPIC}")
+
+
+def _on_mqtt_disconnect(client, userdata, rc):
+    global mqtt_trigger_enabled
+    logger.warning(f"MQTT disconnected (rc={rc})")
+    if MQTT_TRIGGER_TOPIC:
+        # Fail safe: don't run analysis while we're disconnected from the gate.
+        mqtt_trigger_enabled = False
+
+
+def _on_mqtt_message(client, userdata, msg):
+    global mqtt_trigger_enabled
+    if MQTT_TRIGGER_TOPIC and msg.topic == MQTT_TRIGGER_TOPIC:
+        new_state = _parse_trigger_payload(msg.payload)
+        if new_state != mqtt_trigger_enabled:
+            logger.info(
+                f"Trigger gate changed: {mqtt_trigger_enabled} -> {new_state} "
+                f"(payload={msg.payload!r})"
+            )
+        elif VERBOSE_LOGGING:
+            logger.info(f"Trigger payload received, gate stays {new_state}")
+        mqtt_trigger_enabled = new_state
+
+
 # MQTT client setup
 mqtt_client = None
-if MQTT_BROKER_URL and MQTT_TOPIC:
+if MQTT_BROKER_URL and (MQTT_TOPIC or MQTT_TRIGGER_TOPIC):
     try:
         mqtt_client = mqtt.Client()
+        mqtt_client.on_connect = _on_mqtt_connect
+        mqtt_client.on_disconnect = _on_mqtt_disconnect
+        mqtt_client.on_message = _on_mqtt_message
         parsed_url = urlparse(MQTT_BROKER_URL)
         broker_host = parsed_url.hostname
         broker_port = parsed_url.port or 1883
-        
+
         # Connect to MQTT broker
         mqtt_client.connect(broker_host, broker_port)
         mqtt_client.loop_start()
@@ -64,6 +147,11 @@ if MQTT_BROKER_URL and MQTT_TOPIC:
     except Exception as e:
         logger.error(f"Failed to connect to MQTT broker: {e}")
         mqtt_client = None
+elif MQTT_TRIGGER_TOPIC and not MQTT_BROKER_URL:
+    logger.error(
+        "MQTT_TRIGGER_TOPIC is set but MQTT_BROKER_URL is not. "
+        "Analysis will be gated off until a broker is configured."
+    )
 
 logger.info("Initializing AWS session and assuming role")
 
@@ -442,6 +530,15 @@ def refresh_aws_session():
 def process_frame():
     """Process a series of frames captured at intervals."""
     try:
+        # If a trigger topic is configured, only run when the gate is enabled.
+        if MQTT_TRIGGER_TOPIC and not mqtt_trigger_enabled:
+            if VERBOSE_LOGGING:
+                logger.info(
+                    f"Trigger gate '{MQTT_TRIGGER_TOPIC}' is not enabled. "
+                    f"Skipping analysis cycle."
+                )
+            return True  # Treat like cooldown so the main loop sleeps briefly.
+
         # Check if we're in cooldown period
         global last_failure_time
         if last_failure_time is not None and datetime.now() - last_failure_time <= timedelta(minutes=15):
@@ -603,6 +700,11 @@ def main():
         logger.info(f"Running in continuous mode - processing {IMAGES_PER_SERIES} images")
         logger.info(f"Each analysis cycle captures {IMAGES_PER_SERIES} images at {INTERVAL_BETWEEN_IMAGES}-second intervals (total: {total_analysis_time}s)")
         logger.info(f"Analysis cycles run continuously with no additional wait time")
+        if MQTT_TRIGGER_TOPIC:
+            logger.info(
+                f"MQTT trigger gate enabled on topic '{MQTT_TRIGGER_TOPIC}'. "
+                f"Analysis only runs while a payload like {{\"enabled\": true}} is present."
+            )
         
         consecutive_errors = 0
         max_consecutive_errors = 5

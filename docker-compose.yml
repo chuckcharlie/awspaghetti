@@ -28,3 +28,7 @@ services:
       # Optional: MQTT Configuration
       # - MQTT_BROKER_URL=mqtt://your-broker:1883
       # - MQTT_TOPIC=printdetect/status
+      # Optional: gate analysis on a retained MQTT message.
+      # When set, analysis only runs while this topic carries a payload like
+      # {"enabled": true} (also accepts truthy scalars: true, 1, enabled, yes, on).
+      # - MQTT_TRIGGER_TOPIC=printdetect/enabled
