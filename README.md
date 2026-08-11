@@ -71,6 +71,9 @@ The application is configured through environment variables:
 | `MQTT_BROKER_URL`       | URL of the MQTT broker                                   | No       | -            |
 | `MQTT_TOPIC`            | MQTT topic for status updates                            | No       | -            |
 | `MQTT_TRIGGER_TOPIC`    | MQTT topic to gate analysis on (see MQTT Integration)    | No       | -            |
+| `MQTT_USERNAME`         | Username for MQTT broker authentication                  | No       | -            |
+| `MQTT_PASSWORD`         | Password for MQTT broker authentication                  | No       | -            |
+| `MQTT_CLIENT_ID`        | Client ID the app connects with                          | No       | awspaghetti  |
 
 ### AWS Credentials and Role Assumption
 
@@ -258,6 +261,31 @@ When MQTT is configured, the application will publish status updates to the spec
 ```
 
 The status is published every time the main analysis cycle runs, regardless of whether a Discord notification is sent. This allows other systems to monitor the print status in real-time.
+
+##### Broker Authentication
+
+If your broker requires a username and password, set `MQTT_USERNAME` and `MQTT_PASSWORD`:
+
+```yaml
+environment:
+  - MQTT_BROKER_URL=mqtt://your-broker:1883
+  - MQTT_TOPIC=printdetect/status
+  - MQTT_USERNAME=printdetect
+  - MQTT_PASSWORD=your-broker-password
+```
+
+Leave both unset to connect anonymously. If your broker takes a username with no password, set `MQTT_USERNAME` alone. Credentials embedded in `MQTT_BROKER_URL` (such as `mqtt://user:pass@host:1883`) are ignored — use these variables instead.
+
+##### Client ID
+
+The app connects with the client ID `awspaghetti` so broker-side ACLs and logs can attribute the connection to it. Override it with `MQTT_CLIENT_ID`:
+
+```yaml
+environment:
+  - MQTT_CLIENT_ID=garage-printer
+```
+
+Brokers allow only one connection per client ID, so if you run more than one instance against the same broker, give each one a distinct `MQTT_CLIENT_ID`. Setting it to an empty string makes the client library generate a random ID on each connection.
 
 ##### MQTT Trigger Gate
 

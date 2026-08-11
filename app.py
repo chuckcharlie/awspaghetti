@@ -41,6 +41,16 @@ INTERVAL_BETWEEN_IMAGES = int(os.getenv('INTERVAL_BETWEEN_IMAGES', '10'))  # Sec
 # Optional MQTT configuration
 MQTT_BROKER_URL = os.getenv('MQTT_BROKER_URL')
 MQTT_TOPIC = os.getenv('MQTT_TOPIC')
+# Optional broker credentials. When MQTT_USERNAME is unset the connection stays
+# anonymous. Credentials embedded in MQTT_BROKER_URL are not used.
+MQTT_USERNAME = os.getenv('MQTT_USERNAME')
+MQTT_PASSWORD = os.getenv('MQTT_PASSWORD')
+# Client ID sent to the broker. A stable value keeps ACLs and broker-side log
+# attribution meaningful instead of a new random ID on every connection. Note
+# that brokers allow only one connection per client ID, so if you run several
+# instances against the same broker give each one a distinct MQTT_CLIENT_ID.
+# Setting MQTT_CLIENT_ID to an empty string restores the old random-ID behavior.
+MQTT_CLIENT_ID = os.getenv('MQTT_CLIENT_ID', 'awspaghetti')
 # Optional MQTT trigger topic. When set, analysis only runs while this topic
 # carries a payload indicating the gate is enabled (e.g. {"enabled": true}).
 MQTT_TRIGGER_TOPIC = os.getenv('MQTT_TRIGGER_TOPIC')
@@ -132,13 +142,21 @@ def _on_mqtt_message(client, userdata, msg):
 mqtt_client = None
 if MQTT_BROKER_URL and (MQTT_TOPIC or MQTT_TRIGGER_TOPIC):
     try:
-        mqtt_client = mqtt.Client()
+        mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID)
         mqtt_client.on_connect = _on_mqtt_connect
         mqtt_client.on_disconnect = _on_mqtt_disconnect
         mqtt_client.on_message = _on_mqtt_message
         parsed_url = urlparse(MQTT_BROKER_URL)
         broker_host = parsed_url.hostname
         broker_port = parsed_url.port or 1883
+
+        # Authenticate only when credentials are configured. Unset means the
+        # connection stays anonymous, exactly as before.
+        if MQTT_USERNAME:
+            mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+            logger.info(f"Using MQTT credentials for user '{MQTT_USERNAME}'")
+        elif MQTT_PASSWORD:
+            logger.warning("MQTT_PASSWORD is set without MQTT_USERNAME; ignoring it.")
 
         # Connect to MQTT broker
         mqtt_client.connect(broker_host, broker_port)
